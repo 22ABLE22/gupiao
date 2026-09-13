@@ -234,11 +234,20 @@ def score_symbol(
 
 
 def score_universe(symbols: list[tuple[str, str, float | None, float | None]]) -> list[dict]:
-    results = []
-    for code, market, cost, shares in symbols:
+    """Score symbols concurrently; per-symbol cost is dominated by HTTP fetch."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(row):
+        code, market, cost, shares = row
         try:
-            results.append(score_symbol(code, market, cost=cost, shares=shares))
+            return score_symbol(code, market, cost=cost, shares=shares)
         except Exception as e:
-            results.append({"ok": False, "code": code, "market": market, "error": str(e)})
+            return {"ok": False, "code": code, "market": market, "error": str(e)}
+
+    if len(symbols) <= 1:
+        results = [one(r) for r in symbols]
+    else:
+        with ThreadPoolExecutor(max_workers=min(6, len(symbols))) as ex:
+            results = list(ex.map(one, symbols))
     results.sort(key=lambda x: (-(x.get("score") if x.get("ok") else -1), x.get("code") or ""))
     return results

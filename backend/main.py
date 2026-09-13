@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -25,7 +26,22 @@ logger = logging.getLogger("gupiao")
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
 
-app = FastAPI(title="沪深股票分析", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    try:
+        monitor_svc.start(45)
+        logger.info("market monitor auto-started")
+    except Exception:
+        logger.exception("failed to start monitor")
+    yield
+    try:
+        monitor_svc.shutdown()
+    except Exception:
+        logger.exception("failed to stop monitor cleanly")
+
+
+app = FastAPI(title="沪深股票分析", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,23 +49,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def _startup_monitor():
-    try:
-        monitor_svc.start(45)
-        logger.info("market monitor auto-started")
-    except Exception:
-        logger.exception("failed to start monitor")
-
-
-@app.on_event("shutdown")
-def _shutdown_monitor():
-    try:
-        monitor_svc.shutdown()
-    except Exception:
-        pass
 
 
 class HoldingIn(BaseModel):
@@ -81,25 +80,37 @@ def quote(symbol: str, market: str = ""):
     return data_svc.get_quote(symbol, market)
 
 
+def _frames_to_records(df) -> list[dict]:
+    """NaN/NaT -> None, numpy scalars -> python, in one vectorized pass."""
+    import math
+    import numpy as np
+    import pandas as pd
+    conv = {}
+    for col in df.columns:
+        s = df[col]
+        if pd.api.types.is_float_dtype(s):
+            conv[col] = s.astype(object).where(s.notna(), None).map(
+                lambda x: None if x is None or (isinstance(x, float) and math.isnan(x)) else x
+            )
+        elif pd.api.types.is_integer_dtype(s):
+            conv[col] = s.astype(object).where(s.notna(), None)
+        elif hasattr(s, "item"):
+            conv[col] = s
+        else:
+            conv[col] = s.astype(object).where(s.notna(), None)
+    out = pd.DataFrame(conv, index=df.index)
+    return out.to_dict("records")
+
+
 @app.get("/api/history")
 def history(symbol: str, market: str = "", days: int = 250, adjust: str = "qfq"):
     df = data_svc.get_history(symbol, market, days=days, adjust=adjust)
     if df is None or len(df) == 0:
         raise HTTPException(status_code=404, detail="无历史数据")
     enriched = ind.enrich(df)
-    # convert NaN to None for JSON
-    records = []
-    for _, row in enriched.iterrows():
-        rec = {}
-        for k, v in row.items():
-            if v is None or (isinstance(v, float) and v != v):
-                rec[k] = None
-            elif hasattr(v, "item"):
-                rec[k] = v.item()
-            else:
-                rec[k] = v
-        records.append(rec)
+    records = _frames_to_records(enriched)
     code, mkt = data_svc.parse_symbol(symbol if not market else data_svc._full_code(symbol, market))
+    # Name comes from the history cache's last bar context; one cheap quote.
     q = data_svc.get_quote(code, mkt)
     return {
         "code": code,
@@ -142,12 +153,14 @@ def search(q: str):
 def reference():
     """Educational same-style ETF reference list for conservative learners."""
     groups = ref_svc.get_reference_groups()
-    # Enrich with live quotes (best-effort, sina is fast)
+    # Enrich with live quotes concurrently (per-symbol serial cost was ~3s)
+    pairs = [(it["code"], it["market"]) for g in groups for it in g["items"]]
+    quotes = data_svc.get_quotes_batch(pairs)
     out = []
     for g in groups:
         items = []
         for it in g["items"]:
-            q = data_svc.get_quote(it["code"], it["market"])
+            q = quotes.get((str(it["code"]).upper(), str(it["market"]).upper())) or {}
             items.append({
                 **it,
                 "full": f"{it['code']}.{it['market']}",

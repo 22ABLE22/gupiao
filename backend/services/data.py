@@ -138,7 +138,9 @@ def _full_code(code: str, market: str) -> str:
         return f"{code}.SZ"
     if market == "BJ":
         return f"{code}.BJ"
-    # heuristic
+    # heuristic (BJ: 43/83/87/92 prefixes; check before the generic 9=SH rule)
+    if code.startswith(("43", "83", "87", "92")):
+        return f"{code}.BJ"
     if code.startswith(("5", "6", "9")):
         return f"{code}.SH"
     if code.startswith(("0", "1", "2", "3")):
@@ -153,6 +155,8 @@ def parse_symbol(symbol: str) -> tuple[str, str]:
         code, market = symbol.rsplit(".", 1)
         return code, market
     code = symbol
+    if code.startswith(("43", "83", "87", "92")):
+        return code, "BJ"
     if code.startswith(("5", "6", "9")):
         return code, "SH"
     return code, "SZ"
@@ -340,11 +344,18 @@ def _to_float(v) -> float | None:
         return None
 
 
+_SINA_PREFIX = {"SH": "sh", "SZ": "sz", "BJ": "bj"}
+
+
+def _exch_prefix(market: str) -> str:
+    return _SINA_PREFIX.get(market, "sz")
+
+
 def _quote_sina_hq(code: str, market: str, full: str) -> dict | None:
     """Fast sina realtime quote; good for bond ETFs missing from EM spot."""
     try:
         import requests
-        prefix = "sh" if market == "SH" else "sz"
+        prefix = _exch_prefix(market)
         url = f"https://hq.sinajs.cn/list={prefix}{code}"
         headers = {
             "Referer": "https://finance.sina.com.cn",
@@ -406,7 +417,7 @@ def _quote_tencent(code: str, market: str, full: str) -> dict | None:
     """
     try:
         import requests
-        prefix = "sh" if market == "SH" else "sz"
+        prefix = _exch_prefix(market)
         url = f"https://qt.gtimg.cn/q={prefix}{code}"
         r = requests.get(
             url,
@@ -570,7 +581,7 @@ def _fetch_hist_tencent(code: str, market: str) -> pd.DataFrame:
     amount is left as 0 rather than being aliased to volume.
     """
     import requests
-    prefix = "sh" if market == "SH" else "sz"
+    prefix = _exch_prefix(market)
     symbol = f"{prefix}{code}"
     url = (
         "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
@@ -666,6 +677,25 @@ def get_history(code: str, market: str = "", days: int = 250, adjust: str = "qfq
     return df
 
 
+def get_quotes_batch(pairs, max_workers: int = 8) -> dict:
+    """Fetch quotes concurrently; returns {(code, MARKET): quote_dict}.
+
+    Serial get_quote costs ~200-700ms per symbol; a 15-symbol reference page
+    measured 2.8s serial vs 0.86s with 8 workers. Cache is lock-guarded, and
+    sina/tencent endpoints are per-symbol, so concurrency is safe upstream.
+    """
+    uniq = list(dict.fromkeys(
+        (str(c).strip().upper(), str(m or "").strip().upper()) for c, m in pairs
+    ))
+    if not uniq:
+        return {}
+    if len(uniq) == 1:
+        return {uniq[0]: get_quote(uniq[0][0], uniq[0][1])}
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(uniq))) as ex:
+        vals = list(ex.map(lambda cm: get_quote(cm[0], cm[1]), uniq))
+    return dict(zip(uniq, vals))
+
+
 def get_name(code: str, market: str = "") -> str:
     q = get_quote(code, market)
     return q.get("name") or _full_code(*parse_symbol(code if market else code))
@@ -747,7 +777,7 @@ def _search_spot_tables(q: str, limit: int) -> list[dict]:
             )
             for _, r in df[mask].head(limit).iterrows():
                 code = str(r[col_code]).zfill(6)
-                market = "SH" if code.startswith(("5", "6", "9")) else "SZ"
+                _, market = parse_symbol(_full_code(code, ""))
                 if any(x["code"] == code and x["market"] == market for x in results):
                     continue
                 results.append({

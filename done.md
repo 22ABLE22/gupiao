@@ -121,3 +121,81 @@ ak.fund_etf_spot_em()        → 20.5 秒才返回（即使成功也慢到不能
 - 依赖：虚拟环境完好，无需重新安装
 
 ## 5. 待办见 todo.md
+
+---
+
+# 第二轮更新（2026-09-14）
+
+## 6. 新增已修复项（P0 剩余 + P1/P2 全部完成）
+
+### A1 `indicators.py` RSI 预热污染 → 已修复
+- **实测确认原缺陷**：120 根 K 线中 `rsi14` 有 **14 行恰为 100.0**，全在开头；`fillna(100.0)` 把 warmup NaN 当成满分超买
+- **危害链**：`signal_engine` 遇 RSI≥75 扣 8 分 → 预热段被系统性误判偏空；`detect_signals` 误报"RSI超买"卖出信号
+- **改法**：预热期保持 NaN；仅"真实无下跌"返回 100、完全平盘返回中性 50。下游三处已有 `pd.isna` 保护，自动生效
+- **验证**：连跌序列末值 `0.0`、连涨 `100.0`、平盘 `50.0`；159516 假超买行 **14 → 0**，趋势结论从误判转为"偏空 RSI14=39.2 中性区间"
+
+### A3 `market_clock.py` 节假日 → 已修复
+- 内置上证公告〔2025〕45号 + 春节补充公告的 **2026 休市日期**（19 个工作日休市日）
+- 新增 `is_holiday()` / `is_trading_day()`；`market_phase()` 增 `is_holiday` 字段，节假日工作日返回 `closed / 节假日休市`
+- **调休补班的周六日按股市规则仍休市**（2/14、2/28、5/9、9/20、10/10），不随行政调休开市
+- **验证**：26 项断言全通过（含 9/14 开市、10/1 休市、5 个补班周末、9/30 节前最后交易日）
+- 参数名由 `dt` 改为 `moment`，消除对 `datetime` 模块别名的遮蔽隐患
+
+### A2 提醒落盘 → 已修复
+- `alerts.py` 改为写 `data/alerts.json`（原子写 + `parents[2]/data` 路径）
+- `_seen` 去重记录带 `day` 字段，**跨交易日自动失效**，不再压制次日信号
+- `_load()` 只在首次调用，损坏日志静默降级不影响接口
+- **验证**：写入 2 条 → `importlib.reload` 模拟重启 → 2 条仍在 → `clear_alerts()` 返回 2 且文件与内存同时清空；同键同分重复推送正确返回 `None`
+
+### A4 北交所支持 → 已修复
+- 原因：`prefix = "sh" if market == "SH" else "sz"` 硬编码出现在 **3 处**（sina hq / 腾讯 qt / 腾讯 K线），BJ 全被当 sz 请求恒失败
+- **改法**：新增 `_SINA_PREFIX` + `_exch_prefix()` 统一映射并替换三处；`_full_code()`/`parse_symbol()` 增 `43/83/87/92 → BJ` 推断（置于"9 开头判 SH"之前）；兜底搜索改用 `parse_symbol` 而非重复内联判断
+- **验证**：`_full_code('430047','')=430047.BJ`、`parse_symbol('832000.BJ')=('832000','BJ')`、`_exch_prefix('BJ')=bj`
+- ⚠️ 诚实说明：新浪/腾讯的 BJ 行情实测仍返回空（`source=empty, price=0`），代码路径已正确，是**上游源本身不覆盖北交所**，需东财恢复后才能出数。已不再是"当成深市静默返错数据"
+
+### A5 并发化批量取价 → 已修复（实测 **3.8 倍**）
+- 新增 `data.get_quotes_batch(pairs, max_workers=8)`，缓存有锁保护、行情接口按标的独立，并发安全
+- 三处串行热点已改造：`/api/reference`（15 只）、`portfolio_overview()`（持仓+自选一次批量）、`score_universe()`（6 worker）
+- **验证**：15 只参考 ETF 串行 7435ms → 批量 **1932ms（3.8x）**，成功率 15/15 不变；`portfolio_overview()` 606ms；4 标的并发评分 1575ms 且排序正确
+
+### A6 `/api/history` 逐行 `iterrows` → 已修复
+- 新增 `_frames_to_records()`，按列向量化处理 NaN/NaT/numpy 标量，替代逐行 Python 循环（250 根 K 线 × 20 列）
+- 编译与 27 条路由导入校验通过
+
+### A8 `main.py` 生命周期 → 已修复
+- `@app.on_event("startup"/"shutdown")`（FastAPI 0.141.1 已弃用）迁到 `lifespan` 上下文管理器
+- 停机分支的 `except Exception: pass` 改为 `logger.exception`，异常不再被吞
+
+### A11 `启动服务.bat` → 已修复
+- 加端口占用检测（占用时提示并直接开浏览器，不再让 uvicorn 报错一闪而过）
+- 服务启动 2 秒后自动打开浏览器；uvicorn 退出后 `pause` 便于看报错
+
+### 脱敏（上传前必须处理）→ 已完成
+README、`index.html` 两处文案、`reference.py` 的"你已持有"标签原本写死了**真实持仓与成本**，已全部改为中性科普表述。复扫确认仓库内 `你已持有/你目前仓位/135.684/0.713/ghp_` 零命中。
+
+---
+
+## 7. GitHub 上传结果：**已完成**
+
+- 仓库：**https://github.com/22ABLE22/gupiao**（`private=True`）
+- 分支 `master`，2 条提交，作者已改为 `22ABLE22 <247408282+22ABLE22@users.noreply.github.com>`
+- 远程实测 19 个文件入库；**`data/portfolio.json`、`.venv`、`.env`、令牌文件均未入库**（`git check-ignore` + 远程 tree 双重核验）
+- `.gitignore` 已补：`data/portfolio.json`、`data/alerts.json`、`.env` 等
+
+### 推送失败的真实原因（重要，别误判为 GitHub 故障）
+```
+git push → fatal: SSL certificate problem: unable to get local issuer certificate
+```
+本机装有 **Watt Toolkit（SteamTools）**，它对 GitHub 做 HTTPS 拦截加速：
+```
+github.com:443 证书 issuer = C=CN, O=BeyondDimension, CN=SteamTools Certificate
+```
+该根证书已被系统信任（故 PowerShell API 请求正常），但 Git 默认走自带 OpenSSL 证书库（`http.sslcainfo` 指向 `Git\mingw64\etc\ssl\certs\ca-bundle.crt`），里面没有这张根证书 → 校验失败。
+
+**采用的解法**：`git config --local http.sslBackend schannel`，让 Git 改用 Windows 系统证书库。
+- 仅写入本仓库 `.git/config`，未改全局配置
+- **未使用 `sslVerify false`** —— 在该自签链路上关闭校验会让 PAT 面临中间人窃取风险
+- 复扫确认 `.git/config` 内无 `ghp_` 明文
+
+### 凭据处理
+令牌仅在单条命令/项目外临时文件中使用，未进入命令行参数、`.git/config`、任何提交或任何交付文件。**建议你现在去 GitHub 撤销该 token 并重新生成**（它曾出现在对话里）。

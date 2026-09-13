@@ -43,9 +43,20 @@ def portfolio_overview() -> dict[str, Any]:
     total_mv = 0.0
     total_cost = 0.0
 
-    for h in pf.get("holdings", []):
+    raw_holdings = pf.get("holdings", [])
+    raw_watch = pf.get("watchlist", [])
+    # One concurrent batch instead of per-symbol serial HTTP (~200-700ms each).
+    quotes = data_svc.get_quotes_batch(
+        [(h["code"], h.get("market", "")) for h in raw_holdings]
+        + [(w["code"], w.get("market", "")) for w in raw_watch]
+    )
+
+    def qk(code, market):
+        return (str(code).strip().upper(), str(market or "").strip().upper())
+
+    for h in raw_holdings:
         code, market = h["code"], h.get("market", "")
-        quote = data_svc.get_quote(code, market)
+        quote = quotes.get(qk(code, market)) or data_svc.get_quote(code, market)
         price = float(quote.get("price") or 0)
         shares = float(h.get("shares") or 0)
         cost = float(h.get("cost") or 0)
@@ -84,8 +95,10 @@ def portfolio_overview() -> dict[str, Any]:
         h["weight"] = (h["mv"] / total_mv * 100) if total_mv else 0
 
     watchlist = []
-    for w in pf.get("watchlist", []):
-        q = data_svc.get_quote(w["code"], w.get("market", ""))
+    for w in raw_watch:
+        q = quotes.get(qk(w["code"], w.get("market", ""))) or data_svc.get_quote(
+            w["code"], w.get("market", "")
+        )
         watchlist.append({
             "code": w["code"],
             "market": w.get("market", ""),
