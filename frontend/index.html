@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>沪深股票分析</title>
   <link rel="stylesheet" href="/static/css/app.css" />
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <script src="/static/vendor/echarts.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js'"></script>
 </head>
 <body>
   <div class="app">
@@ -66,6 +66,7 @@
                   <th>浮动盈亏</th>
                   <th>今日</th>
                   <th>仓位</th>
+                  <th>提醒线</th>
                   <th></th>
                 </tr>
               </thead>
@@ -86,6 +87,7 @@
       <section id="view-chart" class="view">
         <div class="chart-toolbar">
           <div class="seg" id="periodSeg">
+            <button data-mode="intraday">分时</button>
             <button data-days="120">120日</button>
             <button data-days="250" class="active">1年</button>
             <button data-days="500">2年</button>
@@ -98,6 +100,7 @@
             <label class="chip"><input type="checkbox" data-ind="ma" checked /> 均线</label>
             <label class="chip"><input type="checkbox" data-ind="boll" /> 布林</label>
             <label class="chip"><input type="checkbox" data-ind="vol" checked /> 成交量</label>
+            <label class="chip"><input type="checkbox" data-ind="macd" checked /> MACD</label>
           </div>
         </div>
         <div id="klineChart" class="chart-xl"></div>
@@ -235,7 +238,8 @@
   <!-- Modal: add holding -->
   <dialog id="holdingDialog">
     <form method="dialog" id="holdingForm" class="modal">
-      <h3>添加持仓</h3>
+      <h3 id="holdingDialogTitle">添加持仓</h3>
+      <input type="hidden" name="edit_index" value="" />
       <label>代码 <input name="code" required placeholder="159516" /></label>
       <label>市场
         <select name="market">
@@ -245,6 +249,9 @@
       </label>
       <label>数量（股） <input name="shares" type="number" min="1" step="1" required /></label>
       <label>成本价 <input name="cost" type="number" min="0.0001" step="0.001" required /></label>
+      <label>止损提醒线（可选，跌破推送） <input name="stop_line" type="number" min="0" step="0.001" placeholder="留空不提醒" /></label>
+      <label>目标提醒线（可选，触及推送） <input name="take_line" type="number" min="0" step="0.001" placeholder="留空不提醒" /></label>
+      <p class="muted" style="margin:0">提醒线仅用于开市监控推送观察，不构成交易指令。</p>
       <div class="modal-actions">
         <button type="button" id="btnHoldingCancel" class="btn ghost">取消</button>
         <button type="submit" id="holdingSubmit" class="btn primary">保存</button>

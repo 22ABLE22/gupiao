@@ -133,6 +133,62 @@ def _emit_from_score(item: dict) -> None:
         logger.info("alert %s %s score=%.1f", kind, full, score)
 
 
+def _check_price_lines(results: list[dict]) -> None:
+    """Alert when a holding crosses its configured stop/take lines."""
+    lines = {}
+    for h in pf_svc.load().get("holdings", []):
+        stop = h.get("stop_line")
+        take = h.get("take_line")
+        if stop or take:
+            lines[(str(h["code"]), str(h.get("market", "")).upper())] = (
+                float(stop) if stop else None,
+                float(take) if take else None,
+            )
+    if not lines:
+        return
+    for item in results:
+        if not item.get("ok"):
+            continue
+        key = (str(item.get("code")), str(item.get("market", "")).upper())
+        pair = lines.get(key)
+        if not pair:
+            continue
+        stop, take = pair
+        price = float(item.get("price") or 0)
+        if not price:
+            continue
+        base = {
+            "code": item.get("code"),
+            "market": item.get("market"),
+            "full": item.get("full"),
+            "name": item.get("name") or item.get("code"),
+            "score": item.get("score"),
+            "confidence": item.get("confidence"),
+            "price": price,
+            "stop_hint": item.get("stop_hint"),
+            "target_hint": item.get("target_hint"),
+        }
+        if stop and price <= stop:
+            alerts_svc.push_alert({
+                **base,
+                "kind": "price_break",
+                "tone": "sell",
+                "title": f"【跌破止损线】{base['name']}",
+                "body": f"{base['full']} 现价 {price} ≤ 你设的提醒线 {stop}（预设提醒，非指令）\n"
+                        + (item.get("advice") or ""),
+                "advice": f"已跌破提醒线 {stop}，请按既定纪律评估，避免情绪化操作。",
+            })
+        if take and price >= take:
+            alerts_svc.push_alert({
+                **base,
+                "kind": "price_target",
+                "tone": "buy",
+                "title": f"【触及目标线】{base['name']}",
+                "body": f"{base['full']} 现价 {price} ≥ 你设的目标线 {take}（预设提醒，非指令）",
+                "advice": f"已到目标位 {take}，可评估止盈或上调移动止盈线。",
+            })
+
+
 def scan_once() -> list[dict]:
     uni = _universe()
     with _lock:
@@ -143,6 +199,10 @@ def scan_once() -> list[dict]:
             _emit_from_score(item)
         except Exception:
             logger.exception("emit failed")
+    try:
+        _check_price_lines(results)
+    except Exception:
+        logger.exception("price-line check failed")
     with _lock:
         _state["scans"] += 1
         _state["last_scan_at"] = time.time()

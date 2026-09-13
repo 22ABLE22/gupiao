@@ -57,12 +57,16 @@ class HoldingIn(BaseModel):
     shares: float = Field(gt=0)
     cost: float = Field(gt=0)
     note: str = ""
+    stop_line: float | None = Field(default=None, gt=0)
+    take_line: float | None = Field(default=None, gt=0)
 
 
 class HoldingPatch(BaseModel):
     shares: float | None = Field(default=None, gt=0)
     cost: float | None = Field(default=None, gt=0)
     note: str | None = None
+    stop_line: float | None = Field(default=None, gt=0)
+    take_line: float | None = Field(default=None, gt=0)
 
 
 class WatchIn(BaseModel):
@@ -78,6 +82,37 @@ def health():
 @app.get("/api/quote")
 def quote(symbol: str, market: str = ""):
     return data_svc.get_quote(symbol, market)
+
+
+@app.get("/api/intraday")
+def intraday(symbol: str, market: str = "", scale: int = 1):
+    """Minute bars for the current (or most recent) trading session."""
+    scale = scale if scale in (1, 5, 15, 30, 60) else 1
+    datalen = 240 if scale == 1 else int(240 / scale) + 8
+    code, mkt = data_svc.parse_symbol(symbol if not market else data_svc._full_code(symbol, market))
+    bars = data_svc.get_intraday(code, mkt, scale=scale, datalen=datalen)
+    if not bars:
+        raise HTTPException(status_code=404, detail="无分时数据")
+    q = data_svc.get_quote(code, mkt)
+    # 均价线：累计成交额 / 累计成交量（amount 缺失时回退 close*volume 近似）
+    cum_amt = 0.0
+    cum_vol = 0.0
+    for b in bars:
+        amt = b.get("amount") or 0.0
+        if not amt:
+            amt = b["close"] * b["volume"]
+        cum_amt += amt
+        cum_vol += b["volume"]
+        b["avg_price"] = round(cum_amt / cum_vol, 4) if cum_vol else b["close"]
+    return {
+        "code": code,
+        "market": mkt,
+        "full": q.get("full"),
+        "name": q.get("name"),
+        "scale": scale,
+        "prev_close": q.get("prev_close"),
+        "bars": bars,
+    }
 
 
 def _frames_to_records(df) -> list[dict]:
@@ -183,7 +218,8 @@ def add_holding(body: HoldingIn):
 @app.patch("/api/portfolio/holdings/{index}")
 def patch_holding(index: int, body: HoldingPatch):
     try:
-        payload = {k: v for k, v in body.model_dump().items() if v is not None}
+        # 保留显式 null（用于清除提醒线），忽略未传字段
+        payload = {k: getattr(body, k) for k in body.model_fields_set}
         pf_svc.update_holding(index, payload)
         return pf_svc.portfolio_overview()
     except IndexError:

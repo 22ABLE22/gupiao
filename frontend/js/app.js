@@ -5,10 +5,13 @@ const state = {
   market: "SZ",
   name: "159516.SZ",
   days: 250,
+  mode: "daily", // daily | intraday
   adjust: "qfq",
-  indicators: { ma: true, boll: false, vol: true },
+  indicators: { ma: true, boll: false, vol: true, macd: true },
   portfolio: null,
   history: null,
+  intraday: null,
+  signals: null,
 };
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -152,7 +155,12 @@ $$("#periodSeg button").forEach((b) => {
   b.addEventListener("click", () => {
     $$("#periodSeg button").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
-    state.days = Number(b.dataset.days);
+    if (b.dataset.mode === "intraday") {
+      state.mode = "intraday";
+    } else {
+      state.mode = "daily";
+      state.days = Number(b.dataset.days);
+    }
     loadChart();
   });
 });
@@ -167,7 +175,9 @@ $$("#adjustSeg button").forEach((b) => {
 $$("#indicatorChips input").forEach((c) => {
   c.addEventListener("change", () => {
     state.indicators[c.dataset.ind] = c.checked;
-    if (state.history) renderKline(state.history);
+    if (state.mode === "intraday") {
+      if (state.intraday) renderIntraday(state.intraday);
+    } else if (state.history) renderKline(state.history);
   });
 });
 
@@ -220,11 +230,15 @@ function renderPortfolio(data) {
 
   const tbody = $("#holdingsTable tbody");
   if (!data.holdings.length) {
-    tbody.innerHTML = `<tr><td colspan="9"><div class="empty">暂无持仓，点击右上角添加</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10"><div class="empty">暂无持仓，点击右上角添加</div></td></tr>`;
   } else {
     tbody.innerHTML = data.holdings
       .map(
-        (h, i) => `<tr data-code="${escapeHtml(h.code)}" data-market="${escapeHtml(h.market)}" data-name="${escapeHtml(h.name)}" data-idx="${i}">
+        (h, i) => {
+          const lines = [];
+          if (h.stop_line != null) lines.push(`损 ${fmtNum(h.stop_line, 3)}`);
+          if (h.take_line != null) lines.push(`标 ${fmtNum(h.take_line, 3)}`);
+          return `<tr data-code="${escapeHtml(h.code)}" data-market="${escapeHtml(h.market)}" data-name="${escapeHtml(h.name)}" data-idx="${i}">
           <td>
             <div><strong>${escapeHtml(h.name)}</strong></div>
             <div class="muted">${escapeHtml(h.full || h.code)}.${escapeHtml(h.market)}</div>
@@ -236,16 +250,27 @@ function renderPortfolio(data) {
           <td class="${toneClass(h.pnl)}">${fmtMoney(h.pnl)}<div class="muted ${toneClass(h.pnl_pct)}">${fmtPct(h.pnl_pct)}</div></td>
           <td class="${toneClass(h.change_pct)}">${fmtPct(h.change_pct)}<div class="muted ${toneClass(h.day_pnl)}">${fmtMoney(h.day_pnl)}</div></td>
           <td>${fmtNum(h.weight, 1)}%</td>
-          <td><button class="btn danger ghost btn-del" data-idx="${i}">删除</button></td>
-        </tr>`
+          <td class="muted">${lines.length ? escapeHtml(lines.join(" / ")) : "—"}</td>
+          <td>
+            <button class="btn ghost btn-edit" data-idx="${i}">设线</button>
+            <button class="btn danger ghost btn-del" data-idx="${i}">删除</button>
+          </td>
+        </tr>`;
+        }
       )
       .join("");
   }
 
   tbody.querySelectorAll("tr[data-code]").forEach((tr) => {
     tr.addEventListener("click", (e) => {
-      if (e.target.classList.contains("btn-del")) return;
+      if (e.target.closest("button")) return;
       selectSymbol(tr.dataset.code, tr.dataset.market, tr.dataset.name);
+    });
+  });
+  tbody.querySelectorAll(".btn-edit").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openHoldingDialog(Number(btn.dataset.idx));
     });
   });
   tbody.querySelectorAll(".btn-del").forEach((btn) => {
@@ -295,19 +320,51 @@ function renderAlloc(holdings) {
   });
 }
 
-/* Add holding */
+/* Add / edit holding */
 const holdingDialog = $("#holdingDialog");
-$("#btnAddHolding").addEventListener("click", () => {
+
+function openHoldingDialog(editIdx = null) {
   const form = $("#holdingForm");
-  form.code.value = state.symbol;
-  form.market.value = state.market;
-  form.shares.value = "";
-  form.cost.value = "";
+  form.reset();
+  form.edit_index.value = editIdx == null ? "" : String(editIdx);
+  $("#holdingDialogTitle").textContent = editIdx == null ? "添加持仓" : "编辑持仓与提醒线";
+
+  if (editIdx == null) {
+    form.code.value = state.symbol;
+    form.market.value = state.market;
+    form.code.readOnly = false;
+    form.market.disabled = false;
+    form.shares.readOnly = false;
+    form.cost.readOnly = false;
+  } else {
+    const h = state.portfolio?.holdings?.[editIdx];
+    if (!h) return;
+    form.code.value = h.code || "";
+    form.market.value = h.market || "SZ";
+    form.shares.value = h.shares ?? "";
+    form.cost.value = h.cost ?? "";
+    form.stop_line.value = h.stop_line ?? "";
+    form.take_line.value = h.take_line ?? "";
+    // 编辑模式：代码/数量/成本只读，专注提醒线；仍可通过删除重加改数量
+    form.code.readOnly = true;
+    form.market.disabled = true;
+    form.shares.readOnly = true;
+    form.cost.readOnly = true;
+  }
   holdingDialog.showModal();
-});
+}
+
+$("#btnAddHolding").addEventListener("click", () => openHoldingDialog(null));
 $("#btnHoldingCancel").addEventListener("click", () => {
   holdingDialog.close();
 });
+
+function parseOptionalNum(v) {
+  if (v === "" || v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 $("#holdingForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const form = e.target;
@@ -315,26 +372,46 @@ $("#holdingForm").addEventListener("submit", async (e) => {
     form.reportValidity();
     return;
   }
-  const payload = {
-    code: form.code.value.trim(),
-    market: form.market.value,
-    shares: Number(form.shares.value),
-    cost: Number(form.cost.value),
-  };
+  const editIdx = form.edit_index.value === "" ? null : Number(form.edit_index.value);
+  const stop = parseOptionalNum(form.stop_line.value);
+  const take = parseOptionalNum(form.take_line.value);
+
   try {
-    const res = await fetch(`${API}/api/portfolio/holdings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    let res;
+    if (editIdx == null) {
+      const payload = {
+        code: form.code.value.trim(),
+        market: form.market.value,
+        shares: Number(form.shares.value),
+        cost: Number(form.cost.value),
+      };
+      if (stop != null) payload.stop_line = stop;
+      if (take != null) payload.take_line = take;
+      res = await fetch(`${API}/api/portfolio/holdings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      // PATCH：显式 null 清除；空字符串也按清除处理
+      const payload = {
+        stop_line: form.stop_line.value === "" ? null : stop,
+        take_line: form.take_line.value === "" ? null : take,
+      };
+      res = await fetch(`${API}/api/portfolio/holdings/${editIdx}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      throw new Error(j.detail || "添加失败");
+      throw new Error(j.detail || "保存失败");
     }
     state.portfolio = await res.json();
     renderPortfolio(state.portfolio);
     holdingDialog.close();
-    toast("持仓已添加");
+    toast(editIdx == null ? "持仓已添加" : "提醒线已更新");
   } catch (err) {
     toast(err.message);
   }
@@ -345,8 +422,24 @@ let klineChart = null;
 
 async function loadChart() {
   const el = $("#klineChart");
+  state.signals = null; // 防跨标的残留
   if (!klineChart) klineChart = echarts.init(el);
   klineChart.showLoading({ text: "加载中", color: "#2f6fed", maskColor: "rgba(244,246,251,0.6)" });
+  if (state.mode === "intraday") {
+    try {
+      const data = await api(
+        `/api/intraday?symbol=${encodeURIComponent(state.symbol)}&market=${encodeURIComponent(state.market)}`
+      );
+      state.intraday = data;
+      setActiveSymbol(data.code, data.market, data.name);
+      renderIntraday(data);
+      await loadSignalsSide();
+    } catch (e) {
+      klineChart.hideLoading();
+      toast("分时加载失败：" + e.message);
+    }
+    return;
+  }
   try {
     const data = await api(
       `/api/history?symbol=${encodeURIComponent(state.symbol)}&market=${encodeURIComponent(state.market)}&days=${state.days}&adjust=${encodeURIComponent(state.adjust)}`
@@ -359,6 +452,122 @@ async function loadChart() {
     klineChart.hideLoading();
     toast("K线加载失败：" + e.message);
   }
+}
+
+function renderIntraday(data) {
+  if (!klineChart) klineChart = echarts.init($("#klineChart"));
+  const bars = data.bars || [];
+  if (!bars.length) {
+    klineChart.hideLoading();
+    klineChart.clear();
+    klineChart.setOption({ title: { text: "暂无分时数据（休市或数据源未覆盖）", left: "center", top: "middle", textStyle: { color: "#6b7a90", fontSize: 14 } } }, true);
+    return;
+  }
+  const prev = Number(data.prev_close) || 0;
+  const times = bars.map((b) => (b.time || "").slice(11, 16));
+  const prices = bars.map((b) => b.close);
+  const avgs = bars.map((b) => b.avg_price);
+  const vols = bars.map((b, i) => ({
+    value: b.volume,
+    itemStyle: {
+      color: prev && b.close >= (i > 0 ? bars[i - 1].close : b.open)
+        ? "rgba(224,49,49,0.55)" : "rgba(12,166,120,0.55)",
+    },
+  }));
+  // 右轴相对昨收的涨跌幅；无昨收则退化为价格原轴
+  const lastP = prices[prices.length - 1];
+  const pct = (p) => (prev ? ((p / prev - 1) * 100) : null);
+  klineChart.setOption(
+    {
+      backgroundColor: "transparent",
+      animation: false,
+      legend: { top: 8, data: ["价格", "均价"], textStyle: { color: "#6b7a90" } },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "cross" },
+        backgroundColor: "rgba(255,255,255,0.95)",
+        textStyle: { color: "#1a2233", fontSize: 12 },
+        formatter: (params) => {
+          const i = params[0]?.dataIndex ?? 0;
+          const b = bars[i];
+          if (!b) return "";
+          const chg = prev ? ((b.close / prev - 1) * 100) : null;
+          const color = chg == null ? "#6b7a90" : chg >= 0 ? "#e03131" : "#0ca678";
+          return [
+            `<div style="font-weight:600">${(b.time || "").slice(5, 16)}</div>`,
+            `价 <b>${fmtNum(b.close, 3)}</b>　均 ${fmtNum(b.avg_price, 3)}`,
+            chg != null ? `<span style="color:${color}">较昨收 ${fmtPct(chg)}</span>` : "",
+            `量 ${fmtNum(b.volume, 0)}`,
+          ].join("<br/>");
+        },
+      },
+      axisPointer: { link: [{ xAxisIndex: "all" }] },
+      grid: [
+        { left: 56, right: 56, top: 40, height: "58%" },
+        { left: 56, right: 56, top: "76%", height: "14%" },
+      ],
+      xAxis: [
+        { type: "category", data: times, gridIndex: 0, boundaryGap: false, axisLabel: { color: "#6b7a90" }, axisLine: { lineStyle: { color: "#c5d0e0" } } },
+        { type: "category", data: times, gridIndex: 1, axisLabel: { show: false }, axisLine: { lineStyle: { color: "#c5d0e0" } } },
+      ],
+      yAxis: [
+        prev
+          ? {
+              gridIndex: 0, splitNumber: 4,
+              min: (v) => Math.min(v.min, prev), max: (v) => Math.max(v.max, prev),
+              axisLabel: { color: "#6b7a90", formatter: (v) => (((v / prev - 1) * 100).toFixed(2) + "%") },
+              splitLine: { lineStyle: { color: "rgba(107,122,144,0.08)" } },
+            }
+          : { gridIndex: 0, scale: true, axisLabel: { color: "#6b7a90" }, splitLine: { lineStyle: { color: "rgba(107,122,144,0.08)" } } },
+        { gridIndex: 1, splitLine: { show: false }, axisLabel: { color: "#6b7a90", formatter: (v) => (v > 1e8 ? (v / 1e8).toFixed(1) + "亿" : v > 1e4 ? (v / 1e4).toFixed(0) + "万" : v) } },
+      ],
+      dataZoom: [
+        { type: "inside", xAxisIndex: [0, 1] },
+        { type: "slider", xAxisIndex: [0, 1], bottom: 8, height: 16, fillerColor: "rgba(47,111,237,0.12)", textStyle: { color: "#6b7a90" } },
+      ],
+      series: [
+        {
+          name: "价格", type: "line", data: prices, showSymbol: false, smooth: false,
+          xAxisIndex: 0, yAxisIndex: 0,
+          lineStyle: { width: 1.4, color: "#2f6fed" },
+          areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [ { offset: 0, color: "rgba(47,111,237,0.18)" }, { offset: 1, color: "rgba(47,111,237,0.02)" } ] } },
+          markLine: prev ? {
+            silent: true, symbol: "none",
+            data: [{ yAxis: prev, label: { formatter: "昨收 " + fmtNum(prev, 3), color: "#6b7a90", fontSize: 10 }, lineStyle: { color: "#9aa8bb", type: "dashed", width: 1 } }],
+          } : undefined,
+        },
+        { name: "均价", type: "line", data: avgs, showSymbol: false, xAxisIndex: 0, yAxisIndex: 0, lineStyle: { width: 1, color: "#f5a524" } },
+        { name: "成交量", type: "bar", data: vols, xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 3 },
+      ],
+    },
+    true
+  );
+  klineChart.hideLoading();
+}
+
+function buildSignalMarks(bars) {
+  const sigs = (state.signals || []).filter((s) => s.kind === "buy" || s.kind === "sell");
+  if (!sigs.length) return { data: [] };
+  const dateIdx = new Map(bars.map((b, i) => [b.date, i]));
+  const data = [];
+  for (const s of sigs) {
+    const i = dateIdx.get(s.date);
+    if (i === undefined) continue; // 信号早于当前视窗，跳过
+    const b = bars[i];
+    const buy = s.kind === "buy";
+    data.push({
+      name: s.name,
+      coord: [i, buy ? b.low : b.high],
+      symbol: buy ? "triangle" : "triangle",
+      symbolSize: 11,
+      symbolRotate: buy ? 0 : 180,
+      symbolOffset: buy ? [0, 8] : [0, -8],
+      itemStyle: { color: buy ? "#e03131" : "#0ca678", borderColor: "#ffffff", borderWidth: 1 },
+      label: { show: false },
+      tooltip: { formatter: `${s.date}<br/>${s.name}（${s.detail}）<br/>收盘 ${fmtNum(s.close, 3)}` },
+    });
+  }
+  return { data };
 }
 
 function renderKline(data) {
@@ -374,6 +583,7 @@ function renderKline(data) {
   const showMA = state.indicators.ma;
   const showBoll = state.indicators.boll;
   const showVol = state.indicators.vol;
+  const showMacd = state.indicators.macd;
 
   const series = [
     {
@@ -388,6 +598,7 @@ function renderKline(data) {
         borderColor: "#e03131",
         borderColor0: "#0ca678",
       },
+      markPoint: buildSignalMarks(bars),
     },
   ];
 
@@ -425,7 +636,13 @@ function renderKline(data) {
     });
   }
 
+  // 动态子图栈：主图之后依次是 成交量、MACD（各自独占 grid/xAxis/yAxis 槽位）
+  const panels = [];
+  if (showVol) panels.push("vol");
+  if (showMacd) panels.push("macd");
+
   if (showVol) {
+    const idx = 1 + panels.indexOf("vol");
     series.push({
       name: "成交量",
       type: "bar",
@@ -435,32 +652,91 @@ function renderKline(data) {
           color: bars[i].close >= bars[i].open ? "rgba(224,49,49,0.55)" : "rgba(12,166,120,0.55)",
         },
       })),
-      xAxisIndex: 1,
-      yAxisIndex: 1,
+      xAxisIndex: idx,
+      yAxisIndex: idx,
       barMaxWidth: 8,
     });
   }
 
-  const grid = showVol
-    ? [
-        { left: 56, right: 16, top: 40, height: "58%" },
-        { left: 56, right: 16, top: "76%", height: "14%" },
-      ]
-    : [{ left: 56, right: 16, top: 40, bottom: 48 }];
+  if (showMacd) {
+    const idx = 1 + panels.indexOf("macd");
+    series.push(
+      {
+        name: "MACD柱",
+        type: "bar",
+        data: bars.map((b) => ({
+          value: b.macd_hist,
+          itemStyle: {
+            color: (b.macd_hist ?? 0) >= 0 ? "rgba(224,49,49,0.7)" : "rgba(12,166,120,0.7)",
+          },
+        })),
+        xAxisIndex: idx,
+        yAxisIndex: idx,
+        barMaxWidth: 6,
+      },
+      {
+        name: "DIF",
+        type: "line",
+        showSymbol: false,
+        smooth: true,
+        lineStyle: { width: 1.1, color: "#f5c542" },
+        data: bars.map((b) => b.macd_dif),
+        xAxisIndex: idx,
+        yAxisIndex: idx,
+      },
+      {
+        name: "DEA",
+        type: "line",
+        showSymbol: false,
+        smooth: true,
+        lineStyle: { width: 1.1, color: "#38bdf8" },
+        data: bars.map((b) => b.macd_dea),
+        xAxisIndex: idx,
+        yAxisIndex: idx,
+      }
+    );
+  }
 
-  const xAxis = showVol
-    ? [
-        { type: "category", data: dates, gridIndex: 0, axisLine: { lineStyle: { color: "#c5d0e0" } }, axisLabel: { color: "#6b7a90" } },
-        { type: "category", data: dates, gridIndex: 1, axisLine: { lineStyle: { color: "#c5d0e0" } }, axisLabel: { show: false } },
-      ]
-    : [{ type: "category", data: dates, axisLine: { lineStyle: { color: "#c5d0e0" } }, axisLabel: { color: "#6b7a90" } }];
+  // 布局：主图占大头，每个子图 14%；无子图时主图吃满
+  const grid = [{ left: 56, right: 16, top: 40 }];
+  if (panels.length === 0) {
+    grid[0].bottom = 48;
+  } else if (panels.length === 1) {
+    grid[0].height = "58%";
+    grid.push({ left: 56, right: 16, top: "76%", height: "14%" });
+  } else {
+    grid[0].height = "50%";
+    grid.push({ left: 56, right: 16, top: "64%", height: "12%" });
+    grid.push({ left: 56, right: 16, top: "79%", height: "12%" });
+  }
 
-  const yAxis = showVol
-    ? [
-        { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: "rgba(107,122,144,0.08)" } }, axisLabel: { color: "#6b7a90" } },
-        { scale: true, gridIndex: 1, splitLine: { show: false }, axisLabel: { color: "#6b7a90", formatter: (v) => (v > 1e8 ? (v / 1e8).toFixed(1) + "亿" : v > 1e4 ? (v / 1e4).toFixed(0) + "万" : v) } },
-      ]
-    : [{ scale: true, splitLine: { lineStyle: { color: "rgba(107,122,144,0.08)" } }, axisLabel: { color: "#6b7a90" } }];
+  const xAxis = grid.map((_, i) => ({
+    type: "category",
+    data: dates,
+    gridIndex: i,
+    axisLine: { lineStyle: { color: "#c5d0e0" } },
+    axisLabel: { show: i === 0, color: "#6b7a90" },
+  }));
+
+  const yAxis = grid.map((_, i) => {
+    if (i === 1 && panels[0] === "vol") {
+      return {
+        scale: true,
+        gridIndex: i,
+        splitLine: { show: false },
+        axisLabel: { color: "#6b7a90", formatter: (v) => (v > 1e8 ? (v / 1e8).toFixed(1) + "亿" : v > 1e4 ? (v / 1e4).toFixed(0) + "万" : v) },
+      };
+    }
+    if (i === 1 && panels[0] === "macd") {
+      return { scale: true, gridIndex: i, splitLine: { show: false }, axisLabel: { color: "#6b7a90" }, name: "MACD", nameTextStyle: { color: "#6b7a90", fontSize: 10 } };
+    }
+    if (i === 2) {
+      return { scale: true, gridIndex: i, splitLine: { show: false }, axisLabel: { color: "#6b7a90" }, name: "MACD", nameTextStyle: { color: "#6b7a90", fontSize: 10 } };
+    }
+    return { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: "rgba(107,122,144,0.08)" } }, axisLabel: { color: "#6b7a90" } };
+  });
+
+  const allXIdx = panels.length ? Array.from({ length: 1 + panels.length }, (_, i) => i) : 0;
 
   klineChart.setOption(
     {
@@ -487,14 +763,14 @@ function renderKline(data) {
             lines.push(`<span style="color:${t === "up" ? "#e03131" : t === "down" ? "#0ca678" : "#6b7a90"}">涨跌 ${fmtPct(b.change_pct)}</span>`);
           }
           if (b.rsi14 != null) lines.push(`RSI14 ${fmtNum(b.rsi14, 1)}`);
-          if (b.macd_dif != null) lines.push(`MACD DIF ${fmtNum(b.macd_dif, 3)}`);
+          if (b.macd_dif != null) lines.push(`MACD DIF ${fmtNum(b.macd_dif, 3)} DEA ${fmtNum(b.macd_dea, 3)} 柱 ${fmtNum(b.macd_hist, 3)}`);
           return lines.join("<br/>");
         },
       },
       axisPointer: { link: [{ xAxisIndex: "all" }] },
       dataZoom: [
-        { type: "inside", xAxisIndex: showVol ? [0, 1] : 0 },
-        { type: "slider", xAxisIndex: showVol ? [0, 1] : 0, bottom: 8, height: 16, borderColor: "rgba(107,122,144,0.2)", fillerColor: "rgba(47,111,237,0.12)", textStyle: { color: "#6b7a90" } },
+        { type: "inside", xAxisIndex: allXIdx },
+        { type: "slider", xAxisIndex: allXIdx, bottom: 8, height: 16, borderColor: "rgba(107,122,144,0.2)", fillerColor: "rgba(47,111,237,0.12)", textStyle: { color: "#6b7a90" } },
       ],
       grid,
       xAxis,
@@ -523,6 +799,11 @@ async function loadSignalsSide() {
       <div class="muted" style="margin-top:10px">多头计分 ${t.buy_votes ?? 0} · 空头计分 ${t.sell_votes ?? 0}</div>
     `;
     const sigs = data.signals || [];
+    state.signals = sigs;
+    // 日线图在位且标的未变时，把信号点同步标到 K 线上
+    if (state.mode === "daily" && state.history && data.code === state.history.code && data.market === state.history.market) {
+      renderKline(state.history);
+    }
     if (!sigs.length) {
       signalList.innerHTML = `<div class="empty">近期无经典交叉信号（属正常，信号较稀疏）</div>`;
     } else {

@@ -284,3 +284,58 @@ history 200 无nan | signals/alerts/monitor 200 | index 200
 - 令牌不要写入任何仓库文件、脚本或聊天记录以外的明文存储。
 - `.git/config` 不应包含 `ghp_`；推送优先用凭据管理器或新 token 一次性输入。
 
+---
+
+# 第四轮：接续千问中断的 P1 改进（2026-09-14）
+
+## 12. 背景
+
+用户提供了千问 AI 工作过程截图：额度中断时已写入大量未提交改动。本轮目标是**查阅现有 diff、补全缺口、验证、更新文档并推送**。
+
+## 13. 中断现场盘点（未提交工作区）
+
+| 文件 | 状态 |
+|---|---|
+| `frontend/vendor/echarts.min.js` | 已下载（约 1.0MB），未入库 |
+| `frontend/index.html` | 本地 ECharts + CDN 兜底；分时按钮；MACD 开关 |
+| `frontend/js/app.js` | 分时渲染、MACD 三宫格、信号 markPoint |
+| `backend/services/data.py` | `get_intraday()` + `_market_from_prefix()` 完整 |
+| `backend/main.py` | `/api/intraday`；Holding 模型加 stop/take |
+| `backend/services/portfolio.py` | stop_line/take_line 读写 |
+| `backend/services/monitor.py` | `_check_price_lines()` 跌破/触及推送 |
+
+**发现的缺口：** 后端价格线已齐，**前端没有录入/展示入口**（表单与持仓表均无 stop/take）。
+
+## 14. 本轮补完
+
+1. 添加持仓弹窗增加「止损提醒线 / 目标提醒线」（可选）
+2. 持仓表增加「提醒线」列 +「设线」编辑（PATCH，空值清除）
+3. 编辑模式下代码/数量/成本只读，专注改线
+4. 语法编译通过；服务 8765 重启后端到端验证
+
+## 15. 端到端验证结果
+
+```
+health ok
+/static/vendor/echarts.min.js  200  1029203 bytes
+/api/intraday 159516.SZ  240 bars  avg_price=0.647  prev_close=0.666
+/api/history 80 bars  macd_dif present
+PATCH stop_line=0.6 take_line=0.75 → 回读正确
+PATCH stop_line=null → 清除成功
+/monitor/scan 2 标的  预览提醒：偏空半导体 / 偏多十年国债
+index.html 含 local echarts + intraday + macd 标记
+```
+
+## 16. 未做（见 todo）
+
+- 提醒等级/音效、分时周期 UI、交易流水、CSV、BJ 回验、2027 日历
+- 未改信号算法与数据源策略
+
+## 17. 提交范围
+
+- `backend/main.py` `services/data.py` `portfolio.py` `monitor.py`
+- `frontend/index.html` `js/app.js` `css/app.css`
+- `frontend/vendor/echarts.min.js`（新增）
+- `todo.md` `done.md`
+
+

@@ -701,6 +701,48 @@ def get_name(code: str, market: str = "") -> str:
     return q.get("name") or _full_code(*parse_symbol(code if market else code))
 
 
+@_cached("intraday", 60)
+def get_intraday(code: str, market: str = "", scale: int = 1, datalen: int = 240) -> list[dict]:
+    """Intraday minute bars from sina (1/5/15/30/60 min).
+
+    Returns [{time, open, high, low, close, volume}], oldest->newest.
+    scale=1 with datalen=240 covers a full trading session.
+    """
+    code, market = parse_symbol(_full_code(code, market))
+    prefix = _exch_prefix(market)
+    try:
+        import requests
+        url = (
+            "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData"
+            f"?symbol={prefix}{code}&scale={int(scale)}&ma=no&datalen={int(datalen)}"
+        )
+        r = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn"},
+            timeout=8,
+        )
+        r.raise_for_status()
+        data = r.json()
+        out = []
+        for row in data or []:
+            try:
+                out.append({
+                    "time": str(row.get("day", "")),
+                    "open": float(row.get("open") or 0),
+                    "high": float(row.get("high") or 0),
+                    "low": float(row.get("low") or 0),
+                    "close": float(row.get("close") or 0),
+                    "volume": float(row.get("volume") or 0),
+                    "amount": float(row.get("amount") or 0),
+                })
+            except (TypeError, ValueError):
+                continue
+        return out
+    except Exception as e:
+        logger.warning("intraday %s.%s: %s", code, market, e)
+        return []
+
+
 def _market_from_prefix(symbol: str) -> str:
     s = symbol.strip().lower()
     if s.startswith("sh"):

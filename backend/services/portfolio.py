@@ -85,6 +85,8 @@ def portfolio_overview() -> dict[str, Any]:
             "day_pnl": day_pnl,
             "weight": 0.0,  # filled later
             "type": quote.get("type"),
+            "stop_line": h.get("stop_line"),
+            "take_line": h.get("take_line"),
         })
 
     total_pnl = total_mv - total_cost
@@ -132,6 +134,8 @@ def add_holding(payload: dict) -> dict:
             code, market = data_svc.parse_symbol(data_svc._full_code(code, market))
         shares = float(payload["shares"])
         cost = float(payload["cost"])
+        stop_line = payload.get("stop_line")
+        take_line = payload.get("take_line")
         found = False
         for h in pf["holdings"]:
             if h["code"] == code and h.get("market", "").upper() == market:
@@ -140,16 +144,25 @@ def add_holding(payload: dict) -> dict:
                 new_shares = old_shares + shares
                 h["cost"] = (old_shares * old_cost + shares * cost) / new_shares if new_shares else cost
                 h["shares"] = new_shares
+                if stop_line is not None:
+                    h["stop_line"] = float(stop_line)
+                if take_line is not None:
+                    h["take_line"] = float(take_line)
                 found = True
                 break
         if not found:
-            pf["holdings"].append({
+            entry = {
                 "code": code,
                 "market": market,
                 "shares": shares,
                 "cost": cost,
                 "note": payload.get("note", ""),
-            })
+            }
+            if stop_line is not None:
+                entry["stop_line"] = float(stop_line)
+            if take_line is not None:
+                entry["take_line"] = float(take_line)
+            pf["holdings"].append(entry)
         save(pf)
         return pf
 
@@ -166,6 +179,13 @@ def update_holding(index: int, payload: dict) -> dict:
             h["cost"] = float(payload["cost"])
         if "note" in payload:
             h["note"] = payload["note"]
+        # 显式传 null 表示清除该提醒线
+        if "stop_line" in payload:
+            v = payload["stop_line"]
+            h["stop_line"] = float(v) if v is not None else None
+        if "take_line" in payload:
+            v = payload["take_line"]
+            h["take_line"] = float(v) if v is not None else None
         save(pf)
         return pf
 

@@ -150,6 +150,7 @@ button { cursor: pointer; }
 .btn.ghost { background: transparent; }
 .btn.ghost:hover { background: rgba(47, 111, 237, 0.06); }
 .btn.danger { color: #c92a2a; }
+.table td .btn + .btn { margin-left: 4px; }
 
 .table-wrap { overflow: auto; }
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }
