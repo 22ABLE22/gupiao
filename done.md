@@ -223,3 +223,64 @@ history 200 无nan | signals/alerts/monitor 200 | index 200
 ```
 运行中的 8765 仍是用户手启的旧进程，需重启 `启动服务.bat` 才会加载新代码（见 todo.md 首项）。
 
+---
+
+# 第三轮：源码复盘与下一阶段准备（2026-09-14）
+
+## 9. 本轮做了什么
+
+在用户自行多轮修改并推送 GitHub 之后，**重新通读仓库源码与文档**（不凭记忆写 todo），核对「文档声称」与「文件实际」是否一致，并据此重写 `todo.md`。
+
+### 9.1 仓库与 Git
+
+| 项 | 结果 |
+|---|---|
+| 远程 | `origin = https://github.com/22ABLE22/gupiao.git` |
+| 分支 | `master` 与 `origin/master` 对齐（`status -sb` 无 ahead/behind） |
+| 最近提交 | 4 条：脱敏 → 数据层修复 → 并发/提醒/北交所 → docs+deps |
+| `.gitignore` | 含 `data/portfolio.json`、`data/alerts.json`、`.env`、`*.token` 等 |
+
+### 9.2 源码盘点（与文件体积/关键实现对齐）
+
+| 文件 | 约大小 | 核对要点 |
+|---|---|---|
+| `backend/services/data.py` | 33KB | `cache_fresh`、`skip_empty`、`CircuitBreaker`、`get_quotes_batch`、断路器注释与实现均在 |
+| `backend/services/indicators.py` | 7.7KB | RSI 预热保持 NaN（注释写明与 signal_engine 联动） |
+| `backend/services/market_clock.py` | 3.5KB | `HOLIDAYS_2026` + `is_holiday` / `is_trading_day` |
+| `backend/services/alerts.py` | 3.1KB | 落盘 `data/alerts.json`、跨日去重、损坏日志降级 |
+| `backend/services/signal_engine.py` | 9.8KB | 多因子综合分 + 止损/目标观察价 |
+| `backend/services/monitor.py` | 6.9KB | 开市轮询与阈值推送 |
+| `backend/services/portfolio.py` | 6.9KB | 批量报价 overview、原子写 |
+| `backend/main.py` | 9.2KB | `lifespan` 启动监控；约 21 条 `@app.` 路由 |
+| `frontend/*` | html 11KB / js 38KB / css 13KB | 6 个 `data-view` 页签齐全 |
+| `启动服务.bat` | — | 端口占用检测 + 延迟开浏览器 + 退出 pause |
+| `requirements.txt` | — | akshare 钉 `1.18.94`，fastapi/uvicorn 有上界 |
+
+### 9.3 文档一致性
+
+- `README.md`：功能、数据源分工、gitignore 说明与当前实现一致；**仓库内已不含真实持仓成本表述**。
+- 本地 `data/portfolio.json` 仍含真实持仓（正确：仅本机）。
+- 旧 todo 首行「P0–P3 全部完成」已过时，**已重写为下一阶段计划**（见 `todo.md`）。
+
+### 9.4 未在本轮修改的代码
+
+本轮**只更新文档**（`todo.md`、`done.md`），未改 Python/JS/CSS，无需重启服务。
+
+---
+
+## 10. 下一阶段入口
+
+完整优先级见 [todo.md](./todo.md)。摘要：
+
+1. **P0**：轮换 GitHub PAT；重启 8765 确认新代码；周一开盘实测监控。
+2. **P1**：MACD 子图 / 价格位提醒 / 交易流水 / ECharts 本地化 / 提醒音效等。
+3. **P2**：教学向回测、Qlib 研究、主题切换。
+
+---
+
+## 11. 安全备忘（再次强调）
+
+- 本对话中出现过的 GitHub PAT **必须在 GitHub 上撤销**，并重新生成 fine-grained token。
+- 令牌不要写入任何仓库文件、脚本或聊天记录以外的明文存储。
+- `.git/config` 不应包含 `ghp_`；推送优先用凭据管理器或新 token 一次性输入。
+
