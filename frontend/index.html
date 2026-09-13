@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>沪深股票分析</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">沪</div>
+        <div>
+          <div class="brand-title">沪深分析台</div>
+          <div class="brand-sub">SH · SZ Personal Desk</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-view="dashboard">持仓总览</button>
+        <button class="nav-item" data-view="live">实时提醒</button>
+        <button class="nav-item" data-view="chart">K线与信号</button>
+        <button class="nav-item" data-view="fund">基本面</button>
+        <button class="nav-item" data-view="compare">自选对比</button>
+        <button class="nav-item" data-view="reference">稳健参考</button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="muted">数据源：东方财富等公开接口</div>
+        <div class="muted">仅供学习，不构成投资建议</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="symbol-picker">
+          <input id="searchInput" class="search-input" placeholder="搜索代码 / 名称，如 159516、国债ETF" autocomplete="off" />
+          <div id="searchResults" class="search-results hidden"></div>
+        </div>
+        <div id="activeSymbol" class="active-symbol">—</div>
+        <div class="top-actions">
+          <button id="btnRefresh" class="btn ghost">刷新</button>
+        </div>
+      </header>
+
+      <!-- Dashboard -->
+      <section id="view-dashboard" class="view active">
+        <div class="stats-row" id="statsRow"></div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>我的持仓</h2>
+            <button class="btn" id="btnAddHolding">+ 添加持仓</button>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="holdingsTable">
+              <thead>
+                <tr>
+                  <th>标的</th>
+                  <th>数量</th>
+                  <th>成本</th>
+                  <th>现价</th>
+                  <th>市值</th>
+                  <th>浮动盈亏</th>
+                  <th>今日</th>
+                  <th>仓位</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>持仓分布</h2>
+          </div>
+          <div id="allocChart" class="chart-md"></div>
+        </div>
+      </section>
+
+      <!-- Chart -->
+      <section id="view-chart" class="view">
+        <div class="chart-toolbar">
+          <div class="seg" id="periodSeg">
+            <button data-days="120">120日</button>
+            <button data-days="250" class="active">1年</button>
+            <button data-days="500">2年</button>
+          </div>
+          <div class="seg" id="adjustSeg">
+            <button data-adjust="qfq" class="active">前复权</button>
+            <button data-adjust="">不复权</button>
+          </div>
+          <div class="chip-row" id="indicatorChips">
+            <label class="chip"><input type="checkbox" data-ind="ma" checked /> 均线</label>
+            <label class="chip"><input type="checkbox" data-ind="boll" /> 布林</label>
+            <label class="chip"><input type="checkbox" data-ind="vol" checked /> 成交量</label>
+          </div>
+        </div>
+        <div id="klineChart" class="chart-xl"></div>
+        <div class="split-2">
+          <div class="panel">
+            <div class="panel-head"><h2>指标状态</h2></div>
+            <div id="trendBox" class="trend-box"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>经典信号</h2>
+              <span class="muted">金叉 / 死叉 / RSI / 布林</span>
+            </div>
+            <div id="signalList" class="signal-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Fundamentals -->
+      <section id="view-fund" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>基本面速览</h2>
+            <span id="fundName" class="muted"></span>
+          </div>
+          <div id="fundGrid" class="fund-grid"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>解读提示（新手友好）</h2></div>
+          <ul id="fundTips" class="tips"></ul>
+        </div>
+      </section>
+
+      <!-- Compare -->
+      <section id="view-compare" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>自选与对比</h2>
+            <div class="inline-actions">
+              <input id="watchInput" class="input-sm" placeholder="添加自选 代码" />
+              <input id="watchMarket" class="input-sm market" placeholder="SH/SZ" />
+              <button class="btn" id="btnAddWatch">添加</button>
+            </div>
+          </div>
+          <div id="watchList" class="watch-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>走势对比（归一化）</h2>
+            <span class="muted">起点=100</span>
+          </div>
+          <div id="compareChart" class="chart-lg"></div>
+        </div>
+      </section>
+
+      <!-- Live alerts -->
+      <section id="view-live" class="view">
+        <div class="stats-row" id="liveStats"></div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>开市监控</h2>
+            <div class="inline-actions">
+              <button class="btn primary" id="btnNotify">开启系统通知</button>
+              <button class="btn" id="btnScanNow">立即扫描</button>
+              <button class="btn ghost" id="btnToggleMon">暂停监控</button>
+              <button class="btn ghost" id="btnClearAlerts">清空提醒</button>
+            </div>
+          </div>
+          <p class="muted" id="monHint">
+            开市时段自动按持仓+自选扫描综合因子；达到阈值时推送「买入关注 / 偏空 / 止损关注」。
+            预览页需保持打开才能收到浏览器通知。
+          </p>
+        </div>
+
+        <div class="split-2">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>实时提醒流</h2>
+              <span class="muted">去重约30分钟</span>
+            </div>
+            <div id="alertList" class="alert-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>综合评分榜</h2>
+              <span class="muted">分高偏多 · 分低偏空</span>
+            </div>
+            <div id="scoreBoard" class="score-board"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>因子说明（透明规则）</h2></div>
+          <ul class="tips">
+            <li>趋势：均线多头/空头、是否站上60日线</li>
+            <li>动量：MACD金叉死叉、RSI超买超卖、短线涨幅</li>
+            <li>波动：布林上下轨与收口</li>
+            <li>量能：放量上涨/下跌确认</li>
+            <li>持仓层：相对成本的浮盈浮亏会额外提示纪律</li>
+            <li>综合分 0–100：≥72 买入关注；58–72 偏多；42–58 观望；30–42 偏空；&lt;30 减仓/止损关注</li>
+            <li>所有输出是观察建议，不是下单指令；请结合你自己的仓位与风险承受力</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Reference -->
+      <section id="view-reference" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>稳健型同类品种参考</h2>
+            <span class="muted">科普观察清单 · 不构成投资建议</span>
+          </div>
+          <p class="ref-intro">
+            你目前仓位以 <strong>十年国债ETF</strong> 为主，整体偏稳健；半导体设备ETF属于行业成长，波动会大不少。
+            下面按风险由低到高列出沪深常见同类 ETF，可一键加入自选，再在「自选对比」里看走势差异。
+          </p>
+          <div id="refGroups" class="ref-groups"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>怎么看这些差异</h2></div>
+          <ul class="tips">
+            <li>货币/短债：净值曲线很平，主要看收益率，不适合作为“进攻仓”。</li>
+            <li>国债ETF：跟利率相关，久期越长波动越大；511260 十年期比短久期弹性大。</li>
+            <li>宽基（如沪深300）：能分享市场平均收益，但熊市仍会明显回撤。</li>
+            <li>红利/低波：跌时通常比成长板块抗跌，长期股息是重要收益来源。</li>
+            <li>黄金ETF：与股债不同涨跌逻辑，适合做分散，不是稳赚。</li>
+            <li>你持有的半导体设备ETF属于高波动行业基金，若追求稳健，可观察它在组合中的占比是否偏高。</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal: add holding -->
+  <dialog id="holdingDialog">
+    <form method="dialog" id="holdingForm" class="modal">
+      <h3>添加持仓</h3>
+      <label>代码 <input name="code" required placeholder="159516" /></label>
+      <label>市场
+        <select name="market">
+          <option value="SZ">深市 SZ</option>
+          <option value="SH">沪市 SH</option>
+        </select>
+      </label>
+      <label>数量（股） <input name="shares" type="number" min="1" step="1" required /></label>
+      <label>成本价 <input name="cost" type="number" min="0.0001" step="0.001" required /></label>
+      <div class="modal-actions">
+        <button type="button" id="btnHoldingCancel" class="btn ghost">取消</button>
+        <button type="submit" id="holdingSubmit" class="btn primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

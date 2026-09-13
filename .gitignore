@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+
+# 本地私密数据：真实持仓/成本，绝不进仓库
+data/portfolio.json
+data/portfolio.tmp
+data/alerts.json
+
+# 本地凭据与环境
+.env
+*.token
+credentials*
