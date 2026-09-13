@@ -8,7 +8,7 @@ REFERENCE_GROUPS = [
         "risk": "较低",
         "blurb": "跟踪国债或政策性金融债，波动通常明显小于股票，适合打底仓、看利率环境。",
         "items": [
-            {"code": "511260", "market": "SH", "name": "十年国债ETF", "tag": "你已持有"},
+            {"code": "511260", "market": "SH", "name": "十年国债ETF", "tag": "久期较长"},
             {"code": "511010", "market": "SH", "name": "国债ETF", "tag": "久期较短"},
             {"code": "511220", "market": "SH", "name": "城投债ETF", "tag": "信用债"},
             {"code": "511380", "market": "SH", "name": "可转债ETF", "tag": "含股性"},
