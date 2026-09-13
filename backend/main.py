@@ -81,25 +81,14 @@ def quote(symbol: str, market: str = ""):
 
 
 def _frames_to_records(df) -> list[dict]:
-    """NaN/NaT -> None, numpy scalars -> python, in one vectorized pass."""
-    import math
-    import numpy as np
+    """NaN/NaT -> None in one vectorized pass.
+
+    Whole-frame astype(object) + where(pd.notna) is the only form that
+    actually leaves plain None behind here (per-column .map re-promoted
+    floats to NaN, which broke JSON encoding of /api/history).
+    """
     import pandas as pd
-    conv = {}
-    for col in df.columns:
-        s = df[col]
-        if pd.api.types.is_float_dtype(s):
-            conv[col] = s.astype(object).where(s.notna(), None).map(
-                lambda x: None if x is None or (isinstance(x, float) and math.isnan(x)) else x
-            )
-        elif pd.api.types.is_integer_dtype(s):
-            conv[col] = s.astype(object).where(s.notna(), None)
-        elif hasattr(s, "item"):
-            conv[col] = s
-        else:
-            conv[col] = s.astype(object).where(s.notna(), None)
-    out = pd.DataFrame(conv, index=df.index)
-    return out.to_dict("records")
+    return df.astype(object).where(pd.notna(df), None).to_dict("records")
 
 
 @app.get("/api/history")

@@ -1,5 +1,9 @@
-fastapi>=0.110.0
-uvicorn[standard]>=0.27.0
-akshare>=1.14.0
-pandas>=2.0.0
-numpy>=1.24.0
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27,<1.0
+# akshare 的接口随上游改版频繁破坏兼容（2026-09 实测东财系列接口限流/字段变化）。
+# 下列为验证通过的已知良好版本；升级前请重跑接口验证再改。
+akshare==1.18.94
+pandas>=2.0
+numpy>=1.24
+# 行情直连源（新浪 hq / 腾讯 qt）经 requests 访问
+requests>=2.28

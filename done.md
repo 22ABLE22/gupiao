@@ -199,3 +199,27 @@ github.com:443 证书 issuer = C=CN, O=BeyondDimension, CN=SteamTools Certificat
 
 ### 凭据处理
 令牌仅在单条命令/项目外临时文件中使用，未进入命令行参数、`.git/config`、任何提交或任何交付文件。**建议你现在去 GitHub 撤销该 token 并重新生成**（它曾出现在对话里）。
+
+---
+
+## 8. 最后一轮收尾（2026-09-14）
+
+### 一次自引入并已修复的回归（诚实记录）
+把 `/api/history` 的逐行转换改成向量化时，第一版按列 `.map` 处理，float64 的 `postVol` 列被重新提升为 `nan`，导致该接口 500（`Out of range float values are not JSON compliant: nan`）。已在 8766 验证实例发现并复现，改用整表 `df.astype(object).where(pd.notna(df), None)` 一步到位。
+- **复测**：history 120/250/不同标的全部 200，响应体 `nan=0 inf=0`，无泄漏。
+- **教训**：性能重构也要端到端打接口，不能只做单元测试。
+
+### 其余收尾
+- `requirements.txt`：把 akshare 固定到实测良好版本 `1.18.94` 并注明升级前需重跑接口验证；显式补 `requests`；fastapi/uvicorn 加上界防 1.0 破坏兼容
+- 快照表 TTL 90→600 秒（与提交说明对齐），减少全市场重拉
+- README 数据说明章节重写，写明新浪/腾讯/东财分工、断路器、2026 休市日历、alerts 落盘
+
+### 端到端状态（8766 验证实例，新代码）
+```
+health 200 75ms | search(茅台) 200 552ms | portfolio 200 579ms
+fundamentals(600519) 200 6.8s PE=19.57 PB=6.34 市值=1.59万亿
+reference 200 1.8s | signals/pro(全部) 200 861ms | clock 200 is_holiday字段在
+history 200 无nan | signals/alerts/monitor 200 | index 200
+```
+运行中的 8765 仍是用户手启的旧进程，需重启 `启动服务.bat` 才会加载新代码（见 todo.md 首项）。
+

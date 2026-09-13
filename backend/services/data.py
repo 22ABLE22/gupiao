@@ -170,7 +170,7 @@ def _is_etf(code: str, market: str) -> bool:
     return False
 
 
-@_cached("etf_spot", 90)
+@_cached("etf_spot", 600)
 def _etf_spot_df() -> pd.DataFrame:
     if not _em_breaker.allow():
         return pd.DataFrame()
@@ -188,7 +188,7 @@ def _etf_spot_df() -> pd.DataFrame:
         return pd.DataFrame()
 
 
-@_cached("stock_spot", 90)
+@_cached("stock_spot", 600)
 def _stock_spot_df() -> pd.DataFrame:
     if not _em_breaker.allow():
         return pd.DataFrame()
