@@ -303,6 +303,62 @@ dialog::backdrop { background: rgba(15, 23, 42, 0.35); }
 .ref-card .acts { display: flex; gap: 6px; margin-top: auto; }
 .ref-card .acts .btn { padding: 6px 10px; font-size: 12px; }
 
+.notify-status {
+  margin-top: 10px; line-height: 1.6; font-size: 12px;
+}
+.notify-status.ok { color: var(--down); }
+.notify-status.warn { color: var(--warn); }
+
+.inpage-alert {
+  position: fixed; right: 20px; top: 72px; z-index: 120;
+  max-width: 360px; background: #fff; color: var(--text);
+  border: 1px solid var(--line); border-left: 4px solid var(--up);
+  border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px;
+}
+.inpage-alert.sell, .inpage-alert.price_break { border-left-color: var(--down); }
+.inpage-alert .t { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+.inpage-alert .b { font-size: 12px; color: var(--muted); white-space: pre-wrap; line-height: 1.5; }
+.inpage-alert .x {
+  margin-top: 8px; border: 0; background: transparent; color: var(--accent);
+  font-size: 12px; cursor: pointer; padding: 0;
+}
+
+.advice-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+.advice-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg3);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.advice-card.tone-buy { border-top: 3px solid var(--up); }
+.advice-card.tone-sell { border-top: 3px solid var(--down); }
+.advice-card.tone-neutral { border-top: 3px solid #94a3b8; }
+.advice-card .hd { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
+.advice-card .nm { font-weight: 700; font-size: 15px; }
+.advice-card .px { font-size: 18px; font-weight: 700; }
+.advice-card .act {
+  font-size: 14px; font-weight: 650; line-height: 1.4;
+}
+.advice-card .meta { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.advice-card ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.advice-card .llm {
+  background: rgba(47,111,237,0.08); border-radius: 8px; padding: 8px 10px;
+  font-size: 12px; color: var(--text); line-height: 1.6;
+}
+.backtest-box { font-size: 13px; line-height: 1.7; }
+.backtest-box table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.backtest-box th, .backtest-box td {
+  border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: right; font-size: 12px;
+}
+.backtest-box th:first-child, .backtest-box td:first-child { text-align: left; }
+
 .alert-list { display: flex; flex-direction: column; gap: 10px; max-height: 520px; overflow: auto; }
 .alert-item {
   border: 1px solid var(--line); border-radius: 12px; padding: 12px;

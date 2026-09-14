@@ -91,6 +91,7 @@ $$(".nav-item").forEach((btn) => {
     if (view === "dashboard") loadPortfolio();
     if (view === "reference") loadReference();
     if (view === "live") loadLive();
+    if (view === "advice") loadAdvice();
   });
 });
 
@@ -1092,20 +1093,120 @@ let liveTimer = null;
 let notifiedIds = new Set();
 
 function notifyBrowser(title, body) {
-  if (!("Notification" in window)) return;
-  if (Notification.permission !== "granted") return;
+  if (!("Notification" in window)) return false;
+  if (Notification.permission !== "granted") return false;
   try {
-    new Notification(title, { body: body || "", tag: title });
-  } catch (_) {}
+    const n = new Notification(title, {
+      body: body || "",
+      tag: title,
+      requireInteraction: false,
+    });
+    n.onclick = () => {
+      window.focus();
+      n.close();
+    };
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
-$("#btnNotify")?.addEventListener("click", async () => {
+function showInPageAlert(title, body, kind = "buy") {
+  const old = document.getElementById("inpageAlert");
+  if (old) old.remove();
+  const el = document.createElement("div");
+  el.id = "inpageAlert";
+  el.className = "inpage-alert " + (kind || "");
+  el.innerHTML = `<div class="t">${escapeHtml(title)}</div>
+    <div class="b">${escapeHtml(body || "")}</div>
+    <button class="x" type="button">知道了</button>`;
+  el.querySelector(".x").addEventListener("click", () => el.remove());
+  document.body.appendChild(el);
+  setTimeout(() => {
+    if (el.isConnected) el.remove();
+  }, 12000);
+}
+
+function notifyAny(title, body, kind) {
+  const ok = notifyBrowser(title, body);
+  // 无系统权限时页内强提示，保证开市仍能看到
+  if (!ok) showInPageAlert(title, body, kind);
+  else showInPageAlert(title, body, kind); // 双通道：页内也留一条，便于挂机页可见
+}
+
+function notifyHelpText() {
+  return [
+    "Edge 开启系统通知步骤：",
+    "1. 地址栏左侧锁形/调节图标 →「网站权限」→「通知」→ 允许",
+    "2. 或打开 edge://settings/content/notifications ，允许本机站点",
+    "3. Windows 设置 → 系统 → 通知，打开并允许 Microsoft Edge",
+    "4. 关闭「专注助手/勿扰」，避免拦截右下角横幅",
+    "5. 改完后刷新本页，再点一次「开启系统通知」",
+    "若权限显示为“已拒绝”，浏览器不会再次弹窗，必须到上述设置里手动改回“允许”。",
+  ].join("\n");
+}
+
+function updateNotifyStatus() {
+  const el = $("#notifyStatus");
+  const btn = $("#btnNotify");
+  if (!el) return;
   if (!("Notification" in window)) {
-    toast("当前浏览器不支持系统通知");
+    el.textContent = "当前浏览器不支持系统通知，将使用页内提醒。";
+    el.className = "notify-status muted";
     return;
   }
-  const p = await Notification.requestPermission();
-  toast(p === "granted" ? "系统通知已开启（请保持本页打开）" : "通知权限未授予");
+  const p = Notification.permission;
+  if (p === "granted") {
+    el.textContent = "系统通知：已授权。保持本页打开即可收到横幅。";
+    el.className = "notify-status ok";
+    if (btn) btn.textContent = "系统通知已开启";
+  } else if (p === "denied") {
+    el.textContent = "系统通知：已被拒绝。请按「通知权限说明」在 Edge 里改回允许，再刷新本页。页内提醒仍可用。";
+    el.className = "notify-status warn";
+    if (btn) btn.textContent = "去设置里允许通知";
+  } else {
+    el.textContent = "系统通知：尚未授权。点击「开启系统通知」，若无弹窗请点「通知权限说明」。";
+    el.className = "notify-status muted";
+    if (btn) btn.textContent = "开启系统通知";
+  }
+}
+
+async function requestNotifyPermission() {
+  if (!("Notification" in window)) {
+    toast("当前浏览器不支持系统通知，将使用页内提醒");
+    updateNotifyStatus();
+    return;
+  }
+  // 已拒绝时 requestPermission 不会再弹窗
+  if (Notification.permission === "denied") {
+    toast("权限已被拒绝，请在 Edge 网站设置里允许通知");
+    alert(notifyHelpText());
+    updateNotifyStatus();
+    return;
+  }
+  try {
+    const p = await Notification.requestPermission();
+    if (p === "granted") {
+      toast("系统通知已开启（请保持本页打开）");
+      try {
+        notifyBrowser("通知已开启", "开市信号与价格线提醒将推送到系统通知");
+      } catch (_) {}
+    } else if (p === "denied") {
+      toast("通知权限被拒绝，已改用页内提醒");
+      alert(notifyHelpText());
+    } else {
+      toast("未选择允许；可再点一次，或查看权限说明");
+    }
+  } catch (e) {
+    toast("请求通知权限失败：" + e.message);
+  }
+  updateNotifyStatus();
+}
+
+$("#btnNotify")?.addEventListener("click", requestNotifyPermission);
+$("#btnNotifyHelp")?.addEventListener("click", () => {
+  alert(notifyHelpText());
+  updateNotifyStatus();
 });
 
 $("#btnScanNow")?.addEventListener("click", async () => {
@@ -1211,7 +1312,7 @@ function renderAlerts(alerts, clock, monitor) {
     if (!id || notifiedIds.has(id)) continue;
     if ((a.ts || 0) * 1 < lastAlertTs) continue;
     if (a.kind && a.kind !== "info") {
-      notifyBrowser(a.title || "行情提醒", (a.body || a.advice || "").slice(0, 120));
+      notifyAny(a.title || "行情提醒", (a.body || a.advice || "").slice(0, 160), a.kind);
     }
     notifiedIds.add(id);
   }
@@ -1258,6 +1359,7 @@ async function loadScoreBoard() {
 }
 
 async function loadLive() {
+  updateNotifyStatus();
   try {
     const data = await api("/api/alerts");
     renderAlerts(data.alerts || [], data.clock, data.monitor);
@@ -1282,7 +1384,7 @@ function startLivePolling() {
         const important =
           kind.includes("strong") || kind === "price_break" || kind === "price_target";
         if (newest && (newest.ts || 0) > lastAlertTs && important) {
-          notifyBrowser(newest.title, (newest.body || "").slice(0, 120));
+          notifyAny(newest.title, (newest.body || "").slice(0, 160), newest.kind);
           toast(newest.title || "新提醒");
           lastAlertTs = newest.ts;
         }
@@ -1299,6 +1401,90 @@ function startLivePolling() {
   liveTimer = setInterval(tick, 10000);
 }
 
+/* ---------- Advice cards ---------- */
+async function loadAdvice() {
+  const box = $("#adviceCards");
+  box.innerHTML = `<div class="empty">计算中…</div>`;
+  const useLLM = !!$("#chkLLM")?.checked;
+  try {
+    const data = await api(`/api/advice?use_llm=${useLLM ? "true" : "false"}`);
+    const items = (data.items || []).filter((x) => x.ok);
+    if (!items.length) {
+      box.innerHTML = `<div class="empty">暂无标的，请先添加持仓或自选</div>`;
+      return;
+    }
+    box.innerHTML = items.map((it) => {
+      const tone = it.tone || "neutral";
+      const conf = it.confidence ?? 50;
+      const res = it.resonance || {};
+      const scen = (it.scenarios || []).map((s) => `<li><b>${escapeHtml(s.if)}</b> → ${escapeHtml(s.then)}</li>`).join("");
+      const pts = (it.explain_points || []).slice(0, 4).map((p) => `<li>${escapeHtml(p)}</li>`).join("");
+      return `<div class="advice-card tone-${escapeHtml(tone)}" data-code="${escapeHtml(it.code)}" data-market="${escapeHtml(it.market)}" data-name="${escapeHtml(it.name)}">
+        <div class="hd">
+          <div>
+            <div class="nm">${escapeHtml(it.name)}</div>
+            <div class="meta">${escapeHtml(it.full || "")} · 分 ${fmtNum(it.score, 0)} · 置信 ${conf}%</div>
+          </div>
+          <div class="px ${toneClass(it.change_pct)}">${fmtNum(it.price, 3)}</div>
+        </div>
+        <div class="act">${escapeHtml(it.action || "")}</div>
+        <div class="meta">${escapeHtml(res.resonance || "")}｜周${fmtNum(res.weekly_vote ?? 0, 1)} 日${fmtNum(res.daily_vote ?? 0, 1)}</div>
+        <div class="meta">${escapeHtml(it.pos_hint || "")}</div>
+        ${pts ? `<ul>${pts}</ul>` : ""}
+        ${scen ? `<ul>${scen}</ul>` : ""}
+        ${it.llm_text ? `<div class="llm"><b>本地模型：</b>${escapeHtml(it.llm_text)}</div>` : ""}
+      </div>`;
+    }).join("");
+
+    box.querySelectorAll(".advice-card").forEach((card) => {
+      card.style.cursor = "pointer";
+      card.addEventListener("click", () => {
+        selectSymbol(card.dataset.code, card.dataset.market, card.dataset.name);
+      });
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+$("#btnAdviceRefresh")?.addEventListener("click", loadAdvice);
+$("#chkLLM")?.addEventListener("change", loadAdvice);
+
+$("#btnBacktest")?.addEventListener("click", async () => {
+  const box = $("#backtestBox");
+  box.textContent = "回测中（约数秒）…";
+  try {
+    const d = await api(`/api/backtest?symbol=${encodeURIComponent(state.symbol)}&market=${encodeURIComponent(state.market)}&days=500&hold_days=5`);
+    if (!d.ok) {
+      box.textContent = d.error || "回测失败";
+      return;
+    }
+    const rec = d.recommended || {};
+    const rows = (d.rows || []).map((r) => {
+      if (!r.n) return `<tr><td>${r.side === "buy" ? "≥" : "≤"}${r.level}</td><td>0</td><td>—</td><td>—</td></tr>`;
+      return `<tr>
+        <td>${r.side === "buy" ? "≥" : "≤"}${r.level}</td>
+        <td>${r.n}</td>
+        <td>${fmtPct((r.win_rate || 0) * 100)}</td>
+        <td>${fmtPct((r.avg_ret || 0) * 100)}</td>
+      </tr>`;
+    }).join("");
+    box.innerHTML = `
+      <div>${escapeHtml(d.code)}.${escapeHtml(d.market)} · 近 ${d.bars} 根日K · 看后 ${d.hold_days} 日涨跌</div>
+      <div>基线（持有后${d.hold_days}日平均）：${d.baseline?.avg_fwd_ret != null ? fmtPct(d.baseline.avg_fwd_ret * 100) : "—"} · 样本 ${d.baseline?.n ?? 0}</div>
+      <div>建议更严阈值：买入≥ <b>${rec.buy_score}</b>（历史胜率 ${rec.buy_win_rate != null ? fmtPct(rec.buy_win_rate * 100) : "—"}，n=${rec.buy_n}）
+        ｜卖出≤ <b>${rec.sell_score}</b>（历史“随后下跌”率 ${rec.sell_win_rate != null ? fmtPct(rec.sell_win_rate * 100) : "—"}，n=${rec.sell_n}）</div>
+      <table>
+        <thead><tr><th>阈值</th><th>次数</th><th>胜率*</th><th>平均收益</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="muted">*买入侧胜率=后N日上涨占比；卖出侧胜率=后N日下跌占比。样本外可能失效，非投资建议。</div>
+    `;
+  } catch (e) {
+    box.textContent = "回测失败：" + e.message;
+  }
+});
+
 /* ---------- Boot ---------- */
 window.addEventListener("resize", () => {
   klineChart?.resize();
@@ -1311,6 +1497,7 @@ async function boot() {
   setActiveSymbol("159516", "SZ", "159516.SZ");
   await loadPortfolio();
   loadSignalsSide();
+  updateNotifyStatus();
   startLivePolling();
 }
 

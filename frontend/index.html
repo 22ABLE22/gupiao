@@ -20,6 +20,7 @@
 
       <nav class="nav">
         <button class="nav-item active" data-view="dashboard">持仓总览</button>
+        <button class="nav-item" data-view="advice">今日操作</button>
         <button class="nav-item" data-view="live">实时提醒</button>
         <button class="nav-item" data-view="chart">K线与信号</button>
         <button class="nav-item" data-view="fund">基本面</button>
@@ -156,6 +157,32 @@
         </div>
       </section>
 
+      <!-- Advice cards -->
+      <section id="view-advice" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>今日操作建议（白话卡）</h2>
+            <div class="inline-actions">
+              <label class="chip"><input type="checkbox" id="chkLLM" /> 本地模型润色</label>
+              <button class="btn" id="btnAdviceRefresh">刷新</button>
+            </div>
+          </div>
+          <p class="muted">
+            综合分 + <strong>日周多周期共振</strong>过滤：只有分数到阈值且结构配合时才会给强建议。
+            本地模型需安装 Ollama 并拉取 qwen2.5:3b；未安装时自动用规则白话，不影响使用。
+          </p>
+          <div id="adviceCards" class="advice-cards"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>阈值历史回测</h2>
+            <button class="btn" id="btnBacktest">对当前标的回测</button>
+          </div>
+          <p class="muted">用近约2年日线，看不同综合分阈值下“后N日涨/跌”的历史占比（教学用，非未来预测）。</p>
+          <div id="backtestBox" class="backtest-box muted">点上方按钮开始…</div>
+        </div>
+      </section>
+
       <!-- Live alerts -->
       <section id="view-live" class="view">
         <div class="stats-row" id="liveStats"></div>
@@ -165,6 +192,7 @@
             <h2>开市监控</h2>
             <div class="inline-actions">
               <button class="btn primary" id="btnNotify">开启系统通知</button>
+              <button class="btn" id="btnNotifyHelp">通知权限说明</button>
               <button class="btn" id="btnScanNow">立即扫描</button>
               <button class="btn ghost" id="btnToggleMon">暂停监控</button>
               <button class="btn ghost" id="btnClearAlerts">清空提醒</button>
@@ -172,8 +200,9 @@
           </div>
           <p class="muted" id="monHint">
             开市时段自动按持仓+自选扫描综合因子；达到阈值时推送「买入关注 / 偏空 / 止损关注」。
-            预览页需保持打开才能收到浏览器通知。
+            页面需保持打开；若系统通知未授权，仍会在本页弹出提醒条。
           </p>
+          <div id="notifyStatus" class="notify-status muted"></div>
         </div>
 
         <div class="split-2">

@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from . import alerts as alerts_svc
+from . import advisor as advisor_svc
 from . import data as data_svc
 from . import market_clock as clock
 from . import portfolio as pf_svc
@@ -30,11 +31,11 @@ _thread: threading.Thread | None = None
 _stop = threading.Event()
 _lock = threading.Lock()
 
-# score thresholds for alerting
+# Stricter defaults: only alert when score is extreme AND resonance is present
 ALERT_STRONG_BUY = 72
-ALERT_BUY = 60
-ALERT_STRONG_SELL = 35
-ALERT_SELL = 42
+ALERT_BUY = 65  # was 60 — fewer weak "buy" noise alerts
+ALERT_STRONG_SELL = 32  # was 35
+ALERT_SELL = 40  # was 42
 
 
 def get_status() -> dict[str, Any]:
@@ -66,6 +67,63 @@ def _universe() -> list[tuple[str, str, float | None, float | None]]:
         seen.add(key)
         rows.append((key[0], key[1], None, None))
     return rows
+
+
+def _emit_from_advice(item: dict) -> None:
+    """Emit alerts only for high-confidence / resonant setups (stricter)."""
+    if not item.get("ok"):
+        return
+    conf = int(item.get("confidence") or 0)
+    tone = item.get("tone")
+    name = item.get("name") or item.get("code")
+    full = item.get("full") or f"{item.get('code')}.{item.get('market')}"
+    score = float(item.get("score") or 50)
+    res = (item.get("resonance") or {}).get("resonance") or ""
+
+    # Gate: require confidence >= 68 (single-TF) or 80+ (resonance)
+    if conf < 68 and tone in ("buy", "sell"):
+        return
+
+    kind = None
+    title = None
+    if tone == "buy" and conf >= 80:
+        kind, title = "strong_buy", f"【买入关注·共振】{name}"
+    elif tone == "buy":
+        kind, title = "buy", f"【偏多】{name}"
+    elif tone == "sell" and conf >= 80:
+        kind, title = "strong_sell", f"【减仓/止损·共振】{name}"
+    elif tone == "sell":
+        kind, title = "sell", f"【偏空】{name}"
+    else:
+        return
+
+    body = item.get("summary") or item.get("advice") or ""
+    if item.get("pos_hint"):
+        body += "\n" + item["pos_hint"]
+    if res:
+        body += f"\n共振：{res}"
+
+    inserted = alerts_svc.push_alert({
+        "code": item.get("code"),
+        "market": item.get("market"),
+        "full": full,
+        "name": name,
+        "kind": kind,
+        "tone": tone,
+        "title": title,
+        "body": body,
+        "score": score,
+        "confidence": conf,
+        "price": item.get("price"),
+        "advice": item.get("summary") or item.get("advice"),
+        "stop_hint": item.get("stop_hint"),
+        "target_hint": item.get("target_hint"),
+        "factors": (item.get("factors") or [])[:4],
+    })
+    if inserted:
+        with _lock:
+            _state["alerts_emitted"] += 1
+        logger.info("alert %s %s score=%.1f conf=%s res=%s", kind, full, score, conf, res)
 
 
 def _emit_from_score(item: dict) -> None:
@@ -193,10 +251,11 @@ def scan_once() -> list[dict]:
     uni = _universe()
     with _lock:
         _state["watch_codes"] = [f"{c}.{m}" for c, m, _, _ in uni]
-    results = se.score_universe(uni)
+    # Strict path: multi-timeframe resonance + scenario card
+    results = advisor_svc.advise_universe(uni, buy_th=ALERT_STRONG_BUY, sell_th=ALERT_STRONG_SELL)
     for item in results:
         try:
-            _emit_from_score(item)
+            _emit_from_advice(item)
         except Exception:
             logger.exception("emit failed")
     try:

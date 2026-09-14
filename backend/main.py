@@ -11,7 +11,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from services import advisor as advisor_svc
 from services import alerts as alerts_svc
+from services import backtest as bt_svc
 from services import data as data_svc
 from services import indicators as ind
 from services import market_clock as clock_svc
@@ -279,6 +281,44 @@ def signals_pro(symbol: str = "", market: str = ""):
         rows.append((key[0], key[1], None, None))
     items = se_svc.score_universe(rows)
     return {"items": items, "disclaimer": "规则因子综合分，仅供学习观察，不构成投资建议。"}
+
+
+@app.get("/api/advice")
+def advice(symbol: str = "", market: str = "", use_llm: bool = False):
+    """Stricter multi-TF action card (plain language)."""
+    pf = pf_svc.load()
+    if symbol:
+        cost = shares = None
+        for h in pf.get("holdings", []):
+            full_h = data_svc._full_code(h["code"], h.get("market", "")).upper()
+            full_s = data_svc._full_code(symbol, market).upper()
+            if h["code"] == symbol or full_h == full_s:
+                cost, shares = float(h.get("cost") or 0) or None, float(h.get("shares") or 0) or None
+                break
+        return advisor_svc.advise_symbol(symbol, market, cost=cost, shares=shares, use_llm=use_llm)
+
+    rows = []
+    seen = set()
+    for h in pf.get("holdings", []):
+        key = (h["code"], h.get("market", ""))
+        seen.add(key)
+        rows.append((key[0], key[1], float(h.get("cost") or 0) or None, float(h.get("shares") or 0) or None))
+    for w in pf.get("watchlist", []):
+        key = (w["code"], w.get("market", ""))
+        if key in seen:
+            continue
+        rows.append((key[0], key[1], None, None))
+    items = advisor_svc.advise_universe(rows, use_llm=use_llm)
+    return {
+        "items": items,
+        "disclaimer": "多周期共振建议，仅供学习观察，不构成投资建议。",
+    }
+
+
+@app.get("/api/backtest")
+def backtest(symbol: str, market: str = "", days: int = 500, hold_days: int = 5):
+    """Historical threshold calibration for one symbol."""
+    return bt_svc.evaluate_thresholds(symbol, market, days=days, hold_days=hold_days)
 
 
 @app.get("/api/monitor")
