@@ -207,6 +207,8 @@ def _stock_spot_df() -> pd.DataFrame:
 
 
 def _quote_em_spot(code: str, market: str, full: str) -> dict | None:
+    if not _em_breaker.allow():
+        return None
     try:
         if _is_etf(code, market):
             df = _etf_spot_df()
@@ -271,28 +273,42 @@ def get_quote(code: str, market: str = "") -> dict[str, Any]:
         code, market = parse_symbol(code)
     full = _full_code(code, market)
 
-    # Fast path first (individual symbol, ~200ms)
-    fast = _quote_sina_hq(code, market, full)
+    # Fast path: sina + tencent in parallel (tencent carries PE/PB/市值/换手).
+    sina_box: dict[str, Any] = {"q": None}
+    tencent_box: dict[str, Any] = {"q": None}
+
+    def _pull_sina():
+        sina_box["q"] = _quote_sina_hq(code, market, full)
+
+    def _pull_tx():
+        tencent_box["q"] = _quote_tencent(code, market, full)
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        ex.submit(_pull_sina)
+        ex.submit(_pull_tx)
+
+    fast = sina_box["q"]
     if fast:
-        # Tencent single-symbol call is cheap and carries PE/PB/市值/换手率.
-        # Sina hq does not, so without this the fundamentals page stays empty.
-        if fast.get("pe") is None and fast.get("pb") is None:
-            tx = _quote_tencent(code, market, full)
-            if tx:
-                for k in ("pe", "pb", "total_mv", "circ_mv", "turnover"):
-                    if tx.get(k) is not None and fast.get(k) is None:
-                        fast[k] = tx[k]
-                if tx.get("name") and fast.get("name") in (None, "", full):
-                    fast["name"] = tx["name"]
+        tx = tencent_box["q"]
+        if tx:
+            for k in ("pe", "pb", "total_mv", "circ_mv", "turnover"):
+                if tx.get(k) is not None and fast.get(k) is None:
+                    fast[k] = tx[k]
+            if tx.get("name") and fast.get("name") in (None, "", full):
+                fast["name"] = tx["name"]
         # Optionally enrich from EM only when a *fresh* full snapshot exists.
         cache_key_prefix = "etf_spot:" if _is_etf(code, market) else "stock_spot:"
-        if cache_fresh(cache_key_prefix):
+        if cache_fresh(cache_key_prefix) and _em_breaker.allow():
             extra = _quote_em_spot(code, market, full)
             if extra:
                 for k in ("pe", "pb", "total_mv", "circ_mv", "turnover"):
                     if extra.get(k) is not None and fast.get(k) is None:
                         fast[k] = extra[k]
         return fast
+
+    # sina failed — try tencent as primary, then EM
+    if tencent_box["q"]:
+        return tencent_box["q"]
 
     em = _quote_em_spot(code, market, full)
     if em:
@@ -878,19 +894,42 @@ def search(query: str, limit: int = 8) -> list[dict]:
     return results[:limit]
 
 
+@_cached("stock_info", 3600, skip_empty=True)
+def _stock_info_cached(code: str) -> dict:
+    """Industry / listing metadata. Cached 1h; respects EM circuit breaker."""
+    if not _em_breaker.allow():
+        return {}
+    try:
+        import akshare as ak
+        info = ak.stock_individual_info_em(symbol=code)
+        if info is None or not len(info):
+            return {}
+        kv = {}
+        for _, row in info.iterrows():
+            kv[str(row.iloc[0])] = row.iloc[1]
+        _em_breaker.record_success()
+        return kv
+    except Exception as e:
+        _em_breaker.record_failure()
+        logger.debug("stock info %s: %s", code, e)
+        return {}
+
+
 def get_fundamentals(code: str, market: str = "") -> dict:
     """Best-effort fundamentals from free sources."""
     code, market = parse_symbol(code if not market else _full_code(code, market))
     full = _full_code(code, market)
     quote = get_quote(code, market)
-    # Pull richer EM fields on demand (this page can wait)
-    em = _quote_em_spot(code, market, full)
-    if em:
-        for k, v in em.items():
-            if quote.get(k) in (None, "", 0) and v not in (None, ""):
-                quote[k] = v
-        if em.get("name") and (not quote.get("name") or quote.get("name") == full):
-            quote["name"] = em["name"]
+    # EM spot full-table is expensive and often rate-limited; only try when core fields missing.
+    needs_em = quote.get("pe") is None and quote.get("pb") is None
+    if needs_em and _em_breaker.allow():
+        em = _quote_em_spot(code, market, full)
+        if em:
+            for k, v in em.items():
+                if quote.get(k) in (None, "", 0) and v not in (None, ""):
+                    quote[k] = v
+            if em.get("name") and (not quote.get("name") or quote.get("name") == full):
+                quote["name"] = em["name"]
     out = {
         "code": code,
         "market": market,
@@ -920,22 +959,14 @@ def get_fundamentals(code: str, market: str = "") -> dict:
     item("换手率", quote.get("turnover"), "%")
 
     # Extra stock fundamentals via spot already covers most; try individual info for stocks
+    # Cached per code to avoid a 2-6s EM round-trip on every fundamentals open.
     if out["type"] == "stock":
-        try:
-            import akshare as ak
-            info = ak.stock_individual_info_em(symbol=code)
-            if info is not None and len(info):
-                kv = {}
-                for _, row in info.iterrows():
-                    k = str(row.iloc[0])
-                    v = row.iloc[1]
-                    kv[k] = v
-                item("行业", kv.get("行业", kv.get("所属行业")))
-                item("上市时间", kv.get("上市时间"))
-                item("总股本", kv.get("总股本"))
-                item("流通股", kv.get("流通股"))
-        except Exception as e:
-            logger.debug("individual info: %s", e)
+        info_kv = _stock_info_cached(code)
+        if info_kv:
+            item("行业", info_kv.get("行业", info_kv.get("所属行业")))
+            item("上市时间", info_kv.get("上市时间"))
+            item("总股本", info_kv.get("总股本"))
+            item("流通股", info_kv.get("流通股"))
 
     # 52w range from history
     try:

@@ -1269,24 +1269,34 @@ async function loadLive() {
 
 function startLivePolling() {
   if (liveTimer) return;
-  liveTimer = setInterval(async () => {
+  const tick = async () => {
     const active = $(".nav-item.active")?.dataset.view;
-    // always refresh alerts quietly; scoreboard only when live view open
     try {
       const data = await api("/api/alerts");
+      const trading = !!data.clock?.is_trading;
       if (active === "live") {
         renderAlerts(data.alerts || [], data.clock, data.monitor);
-      } else if ((data.alerts || []).length && data.clock?.is_trading) {
-        // background toast for new strong alerts
+      } else if ((data.alerts || []).length && trading) {
         const newest = data.alerts[0];
-        if (newest && (newest.ts || 0) > lastAlertTs && (newest.kind || "").includes("strong")) {
+        const kind = newest?.kind || "";
+        const important =
+          kind.includes("strong") || kind === "price_break" || kind === "price_target";
+        if (newest && (newest.ts || 0) > lastAlertTs && important) {
           notifyBrowser(newest.title, (newest.body || "").slice(0, 120));
           toast(newest.title || "新提醒");
           lastAlertTs = newest.ts;
         }
       }
+      // 开市 10s，休市 30s
+      const next = trading ? 10000 : 30000;
+      if (tick._ms !== next) {
+        tick._ms = next;
+        clearInterval(liveTimer);
+        liveTimer = setInterval(tick, next);
+      }
     } catch (_) {}
-  }, 20000);
+  };
+  liveTimer = setInterval(tick, 10000);
 }
 
 /* ---------- Boot ---------- */
