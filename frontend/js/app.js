@@ -1286,12 +1286,12 @@ function renderAlerts(alerts, clock, monitor) {
     <div class="stat-card">
       <div class="label">提醒列表</div>
       <div class="value">${alerts.length}</div>
-      <div class="sub">列表可见条数 · 历史恢复 ${monitor?.restored_count ?? 0}</div>
+      <div class="sub">历史 ${monitor?.restored_count ?? 0}</div>
     </div>
     <div class="stat-card">
-      <div class="label">本次运行新推送</div>
+      <div class="label">本次推送</div>
       <div class="value">${monitor?.session_pushed ?? monitor?.alerts_emitted ?? 0}</div>
-      <div class="sub">历史累计 ${monitor?.total_pushed ?? 0}（非天数，是提醒条数）</div>
+      <div class="sub">累计 ${monitor?.total_pushed ?? 0}</div>
     </div>
   `;
 
