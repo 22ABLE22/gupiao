@@ -46,7 +46,13 @@ def get_status() -> dict[str, Any]:
             "thread_alive": bool(_thread and _thread.is_alive()),
             "server_phase": phase,
             "should_monitor": phase["is_trading"] and _state["running"],
+            # 本次进程新推送数（重启会归零）
+            "session_pushed": _state.get("alerts_emitted") or 0,
         }
+    try:
+        st.update(alerts_svc.stats())
+    except Exception:
+        pass
     return st
 
 

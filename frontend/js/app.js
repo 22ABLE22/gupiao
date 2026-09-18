@@ -41,6 +41,16 @@ function toneClass(n) {
   if (Number.isNaN(x) || x === 0) return "flat";
   return x > 0 ? "up" : "down";
 }
+/** 展示用代码：避免 full 已含 .SH/.SZ 时再拼一次市场后缀 */
+function fmtSymbol(code, market, full) {
+  const f = (full || "").trim();
+  const c = (code || "").trim();
+  const m = (market || "").trim().toUpperCase();
+  if (!f) return m ? `${c}.${m}` : c;
+  // full 已带交易所后缀
+  if (/\.(SH|SZ|BJ)$/i.test(f)) return f;
+  return m ? `${f}.${m}` : f;
+}
 function toast(msg) {
   const el = $("#toast");
   el.textContent = msg;
@@ -242,7 +252,7 @@ function renderPortfolio(data) {
           return `<tr data-code="${escapeHtml(h.code)}" data-market="${escapeHtml(h.market)}" data-name="${escapeHtml(h.name)}" data-idx="${i}">
           <td>
             <div><strong>${escapeHtml(h.name)}</strong></div>
-            <div class="muted">${escapeHtml(h.full || h.code)}.${escapeHtml(h.market)}</div>
+            <div class="muted">${escapeHtml(fmtSymbol(h.code, h.market, h.full))}</div>
           </td>
           <td>${fmtNum(h.shares, 0)}</td>
           <td>${fmtNum(h.cost, 3)}</td>
@@ -899,7 +909,7 @@ function renderWatch(list) {
       (w) => `<div class="watch-item" data-code="${escapeHtml(w.code)}" data-market="${escapeHtml(w.market)}" data-name="${escapeHtml(w.name || w.code)}">
         <div class="meta">
           <strong>${escapeHtml(w.name || w.code)}</strong>
-          <span class="muted">${escapeHtml(w.full || w.code)}.${escapeHtml(w.market)} · ${w.type === "etf" ? "ETF" : "股票"}</span>
+          <span class="muted">${escapeHtml(fmtSymbol(w.code, w.market, w.full))} · ${w.type === "etf" ? "ETF" : "股票"}</span>
         </div>
         <div style="text-align:right">
           <div>${fmtNum(w.price, 3)}</div>
@@ -1274,9 +1284,14 @@ function renderAlerts(alerts, clock, monitor) {
       <div class="sub">持仓 + 自选</div>
     </div>
     <div class="stat-card">
-      <div class="label">已推送提醒</div>
+      <div class="label">提醒列表</div>
       <div class="value">${alerts.length}</div>
-      <div class="sub">累计 ${monitor?.alerts_emitted || 0}</div>
+      <div class="sub">列表可见条数 · 历史恢复 ${monitor?.restored_count ?? 0}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">本次运行新推送</div>
+      <div class="value">${monitor?.session_pushed ?? monitor?.alerts_emitted ?? 0}</div>
+      <div class="sub">历史累计 ${monitor?.total_pushed ?? 0}（非天数，是提醒条数）</div>
     </div>
   `;
 

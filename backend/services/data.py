@@ -265,6 +265,31 @@ def _quote_em_spot(code: str, market: str, full: str) -> dict | None:
         return None
 
 
+def _prefer_name(a: str | None, b: str | None) -> str | None:
+    """Pick the fresher display name.
+
+    XD/XR/DR are exchange-day prefixes (除息/除权/除权除息). On those days some
+    feeds (e.g. Tencent) show `XD十年国债ETF国泰` while others (Sina) drop the
+    prefix. Prefer the version that carries the status prefix.
+    """
+    a = (a or "").strip() or None
+    b = (b or "").strip() or None
+    if not a:
+        return b
+    if not b:
+        return a
+    if a == b:
+        return a
+    a_status = a[:2].upper() in ("XD", "XR", "DR")
+    b_status = b[:2].upper() in ("XD", "XR", "DR")
+    if b_status and not a_status:
+        return b
+    if a_status and not b_status:
+        return a
+    # otherwise keep the longer/more complete live name
+    return b if len(b) > len(a) else a
+
+
 def get_quote(code: str, market: str = "") -> dict[str, Any]:
     """Latest quote for stock or ETF. Prefer fast sina, enrich with EM when warm."""
     if market:
@@ -294,6 +319,10 @@ def get_quote(code: str, market: str = "") -> dict[str, Any]:
             for k in ("pe", "pb", "total_mv", "circ_mv", "turnover"):
                 if tx.get(k) is not None and fast.get(k) is None:
                     fast[k] = tx[k]
+            # 名称：保留含 XD/XR/DR 等除息除权前缀的实时名
+            preferred = _prefer_name(fast.get("name"), tx.get("name"))
+            if preferred:
+                fast["name"] = preferred
             if tx.get("name") and fast.get("name") in (None, "", full):
                 fast["name"] = tx["name"]
         # Optionally enrich from EM only when a *fresh* full snapshot exists.
@@ -317,9 +346,10 @@ def get_quote(code: str, market: str = "") -> dict[str, Any]:
 
 
 # Bond / money ETFs sometimes missing from EM stock-style ETF spot list
+# 仅当实时源完全没有名称时兜底，不覆盖含 XD/XR 的实时名
 _NAME_HINTS = {
     "159516": "半导体设备ETF",
-    "511260": "十年国债ETF",
+    "511260": "十年国债ETF国泰",
     "511010": "国债ETF",
     "511030": "公司债ETF",
     "511220": "城投债ETF",
@@ -390,7 +420,8 @@ def _quote_sina_hq(code: str, market: str, full: str) -> dict | None:
         if len(parts) < 32:
             return None
         name = parts[0].strip()
-        if code in _NAME_HINTS and (not name or len(name) < 5):
+        # 本地 hints 只在实时名为空时使用，避免盖掉 XD 等当日状态名
+        if (not name or len(name) < 3) and code in _NAME_HINTS:
             name = _NAME_HINTS[code]
         open_ = float(parts[1] or 0)
         prev = float(parts[2] or 0)

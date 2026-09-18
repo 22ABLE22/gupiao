@@ -276,10 +276,10 @@
           <option value="SH">沪市 SH</option>
         </select>
       </label>
-      <label>数量（股） <input name="shares" type="number" min="1" step="1" required /></label>
-      <label>成本价 <input name="cost" type="number" min="0.0001" step="0.001" required /></label>
-      <label>止损提醒线（可选，跌破推送） <input name="stop_line" type="number" min="0" step="0.001" placeholder="留空不提醒" /></label>
-      <label>目标提醒线（可选，触及推送） <input name="take_line" type="number" min="0" step="0.001" placeholder="留空不提醒" /></label>
+      <label>数量（股） <input name="shares" type="number" min="1" step="1" required inputmode="numeric" /></label>
+      <label>成本价 <input name="cost" type="number" min="0" step="any" required inputmode="decimal" placeholder="如 134.409" /></label>
+      <label>止损提醒线（可选，跌破推送） <input name="stop_line" type="number" min="0" step="any" inputmode="decimal" placeholder="留空不提醒" /></label>
+      <label>目标提醒线（可选，触及推送） <input name="take_line" type="number" min="0" step="any" inputmode="decimal" placeholder="留空不提醒" /></label>
       <p class="muted" style="margin:0">提醒线仅用于开市监控推送观察，不构成交易指令。</p>
       <div class="modal-actions">
         <button type="button" id="btnHoldingCancel" class="btn ghost">取消</button>
