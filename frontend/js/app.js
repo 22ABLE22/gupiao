@@ -1099,6 +1099,7 @@ async function loadReference() {
 
 /* ---------- Live alerts ---------- */
 let lastAlertTs = 0;
+let notifySeeded = false; // 首次拉取只登记基线，不推送历史
 let liveTimer = null;
 let notifiedIds = new Set();
 
@@ -1321,17 +1322,31 @@ function renderAlerts(alerts, clock, monitor) {
       .join("");
   }
 
-  // browser notify new alerts
-  for (const a of alerts) {
-    const id = a.id || a.ts;
-    if (!id || notifiedIds.has(id)) continue;
-    if ((a.ts || 0) * 1 < lastAlertTs) continue;
-    if (a.kind && a.kind !== "info") {
-      notifyAny(a.title || "行情提醒", (a.body || a.advice || "").slice(0, 160), a.kind);
+  // 仅推送：开市中 + 本次会话基线之后的新提醒；历史只展示不弹
+  const nowTs = (clock?.now ? Date.parse(clock.now) / 1000 : Date.now() / 1000);
+  const newestTs = alerts.reduce((m, a) => Math.max(m, Number(a.ts) || 0), 0);
+  if (!notifySeeded) {
+    lastAlertTs = newestTs || lastAlertTs;
+    notifySeeded = true;
+    for (const a of alerts) notifiedIds.add(a.id || a.ts);
+  } else if (clock?.is_trading) {
+    for (const a of alerts) {
+      const id = a.id || a.ts;
+      const ts = Number(a.ts) || 0;
+      if (!id || notifiedIds.has(id)) continue;
+      if (ts <= lastAlertTs) continue;
+      // 防时钟偏差：太旧的不推
+      if (nowTs - ts > 300) continue;
+      if (a.kind && a.kind !== "info") {
+        notifyAny(a.title || "行情提醒", (a.body || a.advice || "").slice(0, 160), a.kind);
+      }
+      notifiedIds.add(id);
     }
-    notifiedIds.add(id);
+  } else {
+    // 休市：只记录，不推送
+    for (const a of alerts) notifiedIds.add(a.id || a.ts);
   }
-  if (alerts.length) lastAlertTs = Math.max(lastAlertTs, ...alerts.map((a) => a.ts || 0));
+  if (newestTs) lastAlertTs = Math.max(lastAlertTs, newestTs);
 }
 
 async function loadScoreBoard() {
@@ -1393,18 +1408,25 @@ function startLivePolling() {
       const trading = !!data.clock?.is_trading;
       if (active === "live") {
         renderAlerts(data.alerts || [], data.clock, data.monitor);
-      } else if ((data.alerts || []).length && trading) {
+      } else if ((data.alerts || []).length) {
         const newest = data.alerts[0];
         const kind = newest?.kind || "";
         const important =
           kind.includes("strong") || kind === "price_break" || kind === "price_target";
-        if (newest && (newest.ts || 0) > lastAlertTs && important) {
+        const ts = Number(newest?.ts) || 0;
+        // 休市或历史消息一律不推
+        if (!notifySeeded) {
+          lastAlertTs = (data.alerts || []).reduce((m, a) => Math.max(m, Number(a.ts) || 0), 0) || lastAlertTs;
+          notifySeeded = true;
+          for (const a of data.alerts || []) notifiedIds.add(a.id || a.ts);
+        } else if (trading && newest && important && ts > lastAlertTs) {
           notifyAny(newest.title, (newest.body || "").slice(0, 160), newest.kind);
-          toast(newest.title || "新提醒");
-          lastAlertTs = newest.ts;
+          lastAlertTs = ts;
+          notifiedIds.add(newest.id || newest.ts);
+        } else if (!trading && data.alerts?.length) {
+          lastAlertTs = Math.max(lastAlertTs, ...data.alerts.map((a) => Number(a.ts) || 0));
         }
       }
-      // 开市 10s，休市 30s
       const next = trading ? 10000 : 30000;
       if (tick._ms !== next) {
         tick._ms = next;
